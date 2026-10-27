@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}作品浏览 - Pixiv Following Downloader{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>作品浏览</h1>
+  <div class="spacer"></div>
+  <div class="btn-row">
+    <input type="search" id="artistFilter" placeholder="筛选画师名" style="width:180px">
+    <a class="btn {{ 'primary' if preview }}"
+       href="{{ url_for('browse', preview=1) if not preview else url_for('browse') }}">
+      {{ '关闭代表作预览' if preview else '预览代表作' }}
+    </a>
+    <form method="post" action="{{ url_for('browse_refresh') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <button class="btn primary" type="submit" {% if not auth_ok %}disabled{% endif %}>刷新关注列表</button>
+    </form>
+  </div>
+</div>
+
+<p class="small muted">
+  目标用户 ID：{{ target_user_id or '未设置' }}
+  {% if updated_at %} · 列表更新时间：{{ updated_at }}{% endif %}
+  {% if preview %} · 每个画师展示 3 个代表作（按收藏数排序，来自关注列表接口）{% endif %}
+</p>
+
+{% if not auth_ok %}
+<div class="flash flash-warn">Pixiv 未认证，无法刷新关注列表或在线浏览作品。请到「配置」页检查 refresh_token。</div>
+{% endif %}
+
+{% if preview and not has_previews %}
+<div class="flash flash-warn">
+  当前缓存里还没有画师作品预览。点「刷新关注列表」拉取一次，或等下一轮自动运行后即可显示。
+</div>
+{% endif %}
+
+{% if artists %}
+<div class="artists {{ 'with-preview' if preview }}" id="artistGrid">
+  {% for a in artists %}
+  <div class="artist" data-name="{{ (a.artist_name or '')|lower }}">
+    <a class="artist-main" href="{{ url_for('browse_artist', artist_id=a.artist_id) }}">
+      {% if a.avatar_url %}
+      <img src="{{ url_for('thumb_proxy', u=a.avatar_url) }}" alt="" loading="lazy"
+           onerror="this.style.visibility='hidden'">
+      {% else %}
+      <span class="avatar"></span>
+      {% endif %}
+      <span class="info">
+        <span class="name">{{ a.artist_name or a.artist_id }}</span>
+        <span class="sub">ID {{ a.artist_id }} · 已下载 {{ a.downloaded }} · 查看全部作品 →</span>
+      </span>
+    </a>
+    {% if preview %}
+      {% if a.previews %}
+      <div class="artist-previews">
+        {% for w in a.previews %}
+        <a class="mini-work" href="https://www.pixiv.net/artworks/{{ w.illust_id }}"
+           target="_blank" rel="noopener" title="{{ w.title }}">
+          {% if w.thumb_url %}
+          <img src="{{ url_for('thumb_proxy', u=w.thumb_url) }}" alt="{{ w.title }}"
+               loading="lazy" decoding="async"
+               onerror="this.style.display='none';this.parentNode.classList.add('thumb-missing')">
+          {% else %}
+          <span class="mini-ph">无预览</span>
+          {% endif %}
+          {% if w.illust_id in downloaded %}<span class="badge">已下载</span>{% endif %}
+          <span class="mini-title">{{ w.title or 'untitled' }}</span>
+          <span class="mini-meta">{{ w.bookmarks }} 收藏 · {{ w.page_count }}p</span>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="artist-previews hint">暂无预览，刷新关注列表后显示</div>
+      {% endif %}
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="panel empty">
+  <div class="big">还没有关注列表缓存</div>
+  <p class="small">点击右上角「刷新关注列表」从 Pixiv 拉取，之后每次自动运行也会同步更新。</p>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var input = document.getElementById("artistFilter");
+  var grid = document.getElementById("artistGrid");
+  if (!input || !grid) return;
+  input.addEventListener("input", function () {
+    var q = input.value.trim().toLowerCase();
+    Array.prototype.forEach.call(grid.children, function (el) {
+      el.style.display = (!q || (el.dataset.name || "").indexOf(q) >= 0) ? "" : "none";
+    });
+  });
+})();
+</script>
+{% endblock %}

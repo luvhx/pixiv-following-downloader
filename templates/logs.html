@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}日志 - Pixiv Following Downloader{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>日志</h1>
+  <div class="spacer"></div>
+  <form method="get" action="{{ url_for('logs') }}" class="btn-row">
+    <select name="n" onchange="this.form.submit()" style="width:auto">
+      {% for opt in (200, 500, 1000, 2000, 5000) %}
+      <option value="{{ opt }}" {{ 'selected' if n == opt }}>最近 {{ opt }} 行</option>
+      {% endfor %}
+    </select>
+  </form>
+  <form method="post" action="{{ url_for('logs_clear') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <button class="btn mini" type="submit">清空</button>
+  </form>
+</div>
+
+<div class="batchbar">
+  <label class="small" style="display:flex;align-items:center;gap:6px">
+    <input type="checkbox" id="autoRefresh"> 每 5 秒自动刷新
+  </label>
+  <span class="spacer"></span>
+  <span class="muted small">仅显示内存日志，不含 Docker 控制台输出</span>
+</div>
+
+<pre class="log" id="logview">{{ log_text or '暂无日志' }}</pre>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var box = document.getElementById("autoRefresh");
+  var view = document.getElementById("logview");
+  var timer = null;
+  var pinned = true;
+  function atBottom() {
+    return view.scrollTop + view.clientHeight >= view.scrollHeight - 30;
+  }
+  function refresh() {
+    fetch("{{ url_for('api_logs') }}?n={{ n }}", { headers: { "Accept": "application/json" } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (!data) return;
+        var keep = pinned && atBottom();
+        view.textContent = (data.log || []).join("\n") || "暂无日志";
+        if (keep) view.scrollTop = view.scrollHeight;
+      })
+      .catch(function () {});
+  }
+  box.addEventListener("change", function () {
+    if (box.checked) {
+      refresh();
+      timer = setInterval(refresh, 5000);
+    } else {
+      clearInterval(timer);
+      timer = null;
+    }
+  });
+  view.addEventListener("scroll", function () { pinned = atBottom(); });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,24 @@
+# 本地配置（含 refresh_token / 密码）
+.env
+
+# 运行数据
+data/
+*.db
+*.db-wal
+*.db-shm
+thumbs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.log

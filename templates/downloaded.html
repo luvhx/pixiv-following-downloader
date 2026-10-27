@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}已下载 - Pixiv Following Downloader{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>已下载</h1>
+  <div class="spacer"></div>
+  <span class="muted small">
+    {% if favorites_only %}共 {{ total }} 个收藏{% else %}共 {{ total }} 个作品{% endif %}
+  </span>
+</div>
+
+<form class="filterbar" method="get" action="{{ url_for('downloaded') }}">
+  <input type="search" name="q" value="{{ q }}" placeholder="搜索标题 / 画师 / tag">
+  <select name="artist">
+    <option value="">全部画师</option>
+    {% for a in artists %}
+    <option value="{{ a.id }}" {{ 'selected' if artist_id == a.id }}>{{ a.name }}（{{ a.count }}）</option>
+    {% endfor %}
+  </select>
+  <input type="text" name="tag" value="{{ tag }}" placeholder="tag 精确筛选" list="taglist">
+  <datalist id="taglist">{% for t in tags %}<option value="{{ t }}">{% endfor %}</datalist>
+  <label class="small" style="display:flex;align-items:center;gap:5px">
+    <input type="checkbox" name="fav" value="1" {% if favorites_only %}checked{% endif %}> 仅收藏
+  </label>
+  <button class="btn primary" type="submit">筛选</button>
+  {% if q or tag or artist_id or favorites_only %}
+  <a class="btn" href="{{ url_for('downloaded') }}">清除</a>
+  {% endif %}
+</form>
+
+{% if favorite_tags %}
+<div class="panel" style="padding:10px 12px;margin-bottom:12px">
+  <div class="btn-row">
+    <span class="muted small">收藏的 tag：</span>
+    {% for t in favorite_tags %}
+    <span class="chip">
+      <a href="{{ url_for('downloaded', tag=t) }}" style="color:inherit">{{ t }}</a>
+      <form method="post" action="{{ url_for('favorite_tag') }}" style="display:inline;margin:0">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <input type="hidden" name="tag" value="{{ t }}">
+        <input type="hidden" name="next" value="{{ request.full_path }}">
+        <button type="submit" title="取消收藏 tag" aria-label="取消收藏 tag {{ t }}"
+                style="border:0;background:none;color:inherit;cursor:pointer;padding:0 0 0 2px">×</button>
+      </form>
+    </span>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if rows %}
+<form id="batch-form" method="post" action="{{ url_for('downloaded_delete_batch') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+  <input type="hidden" name="q" value="{{ q }}">
+  <input type="hidden" name="tag" value="{{ tag }}">
+  <input type="hidden" name="artist" value="{{ artist_id or '' }}">
+  <input type="hidden" name="page" value="{{ page }}">
+  <input type="hidden" name="fav" value="{{ 1 if favorites_only else '' }}">
+</form>
+
+<div class="batchbar">
+  <label class="small" style="display:flex;align-items:center;gap:6px">
+    <input type="checkbox" id="select-all"> 全选本页
+  </label>
+  <span class="muted small" id="selected-count">未选择</span>
+  <div class="spacer"></div>
+  <button type="button" class="btn mini" id="batch-clear" disabled>取消选择</button>
+  <button type="submit" form="batch-form" class="btn mini danger" id="batch-delete" disabled
+          onclick="return confirm('删除选中的作品？文件与记录都会被删除，且不可恢复。');">删除选中</button>
+</div>
+
+<div class="works">
+  {% for r in rows %}
+  <article class="work">
+    <input type="checkbox" class="select-box" form="batch-form" name="illust_id"
+           value="{{ r.illust_id }}" title="选择"
+           aria-label="选择《{{ r.title or 'untitled' }}》">
+    <a class="thumb" href="{{ url_for('downloaded_detail', illust_id=r.illust_id, q=q or None, tag=tag or None, artist=artist_id or None, page=page, fav=1 if favorites_only else None) }}">
+      {% if r.thumb_url %}
+      <img src="{{ url_for('thumb_for_work', illust_id=r.illust_id) }}" alt="{{ r.title }}"
+           loading="lazy" decoding="async" onerror="this.style.display='none';this.parentNode.classList.add('thumb-missing')">
+      {% else %}
+      <span class="placeholder">无预览</span>
+      {% endif %}
+      {% if r.page_count and r.page_count > 1 %}<span class="count">{{ r.page_count }}p</span>{% endif %}
+    </a>
+    <div class="body">
+      <a class="title" href="{{ url_for('downloaded_detail', illust_id=r.illust_id, q=q or None, tag=tag or None, artist=artist_id or None, page=page, fav=1 if favorites_only else None) }}">{{ r.title or 'untitled' }}</a>
+      <div class="meta">
+        <a href="{{ url_for('downloaded', artist=r.author_id, q=q or None) }}">{{ r.author_name }}</a>
+        <span>{{ r.created_at }}</span>
+      </div>
+      {% if r.tags %}
+      <div class="chips" style="margin-top:6px">
+        {% for t in r.tags[:6] %}
+        <a class="chip {{ 'active' if t == tag }}" href="{{ url_for('downloaded', tag=t, q=q or None) }}">{{ t }}</a>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <div class="ops">
+        <a class="btn mini" href="{{ url_for('work_image', illust_id=r.illust_id) }}" target="_blank">原图</a>
+        <form method="post" action="{{ url_for('downloaded_favorite', illust_id=r.illust_id) }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <input type="hidden" name="next" value="{{ request.full_path }}">
+          <button class="btn mini" type="submit"
+                  title="{{ '取消收藏' if r.favorite else '收藏' }}">{{ '★' if r.favorite else '☆' }}</button>
+        </form>
+        <form method="post" action="{{ url_for('downloaded_delete') }}"
+              onsubmit="return confirm('删除这个作品？不可恢复。');">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <input type="hidden" name="illust_id" value="{{ r.illust_id }}">
+          <input type="hidden" name="q" value="{{ q }}">
+          <input type="hidden" name="tag" value="{{ tag }}">
+          <input type="hidden" name="artist" value="{{ artist_id or '' }}">
+          <input type="hidden" name="page" value="{{ page }}">
+          <input type="hidden" name="fav" value="{{ 1 if favorites_only else '' }}">
+          <button class="btn mini danger" type="submit">删除</button>
+        </form>
+      </div>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+  {% for p in pages %}
+    {% if p is none %}<span>…</span>
+    {% elif p == page %}<span class="cur">{{ p }}</span>
+    {% else %}<a href="{{ url_for('downloaded', q=q or None, tag=tag or None, artist=artist_id or None, page=p, fav=1 if favorites_only else None) }}">{{ p }}</a>{% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+{% else %}
+<div class="panel empty">
+  <div class="big">
+    {% if q or tag or artist_id or favorites_only %}没有匹配的作品{% else %}还没有下载作品{% endif %}
+  </div>
+  <p class="small">
+    {% if q or tag or artist_id or favorites_only %}
+    试试<a href="{{ url_for('downloaded') }}">清除筛选</a>。
+    {% else %}
+    去<a href="{{ url_for('browse') }}">作品浏览</a>逛逛，或者等待下一轮自动下载。
+    {% endif %}
+  </p>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var boxes = Array.prototype.slice.call(document.querySelectorAll(".select-box"));
+  var all = document.getElementById("select-all");
+  var counter = document.getElementById("selected-count");
+  var clearBtn = document.getElementById("batch-clear");
+  var delBtn = document.getElementById("batch-delete");
+  if (!boxes.length || !all) return;
+  function refresh() {
+    var n = boxes.filter(function (b) { return b.checked; }).length;
+    counter.textContent = n ? ("已选 " + n + " 个") : "未选择";
+    clearBtn.disabled = n === 0;
+    delBtn.disabled = n === 0;
+    all.checked = n === boxes.length;
+    all.indeterminate = n > 0 && n < boxes.length;
+  }
+  all.addEventListener("change", function () {
+    boxes.forEach(function (b) { b.checked = all.checked; });
+    refresh();
+  });
+  boxes.forEach(function (b) { b.addEventListener("change", refresh); });
+  clearBtn.addEventListener("click", function () {
+    boxes.forEach(function (b) { b.checked = false; });
+    refresh();
+  });
+  refresh();
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}仪表盘 - Pixiv Following Downloader{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>仪表盘</h1>
+  <div class="spacer"></div>
+  <div class="btn-row">
+    <form method="post" action="{{ url_for('run_now') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <button class="btn primary" {% if status.running %}disabled{% endif %}>立即运行</button>
+    </form>
+    {% if status.paused %}
+    <form method="post" action="{{ url_for('resume') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <button class="btn">恢复调度</button>
+    </form>
+    {% else %}
+    <form method="post" action="{{ url_for('pause') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <button class="btn">暂停调度</button>
+    </form>
+    {% endif %}
+    {% if not authed %}
+    <form method="post" action="{{ url_for('reauth') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <button class="btn">重新认证</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Pixiv 认证</div>
+    <div class="value">{{ '已认证' if authed else '未认证' }}</div>
+  </div>
+  <div class="card">
+    <div class="label">运行状态</div>
+    <div class="value">
+      {{ '运行中' if status.running else '空闲' }}
+      {% if status.paused %}<span class="muted small">· 已暂停</span>{% endif %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="label">调度模式</div>
+    <div class="value small" style="font-weight:500">{{ status.mode }}</div>
+  </div>
+  <div class="card">
+    <div class="label">下次运行</div>
+    <div class="value small" style="font-weight:500">{{ status.next_run or '—' }}</div>
+  </div>
+  <div class="card">
+    <div class="label">上次运行</div>
+    <div class="value small" style="font-weight:500">{{ status.last_run or '—' }}</div>
+  </div>
+  <div class="card">
+    <div class="label">目标用户</div>
+    <div class="value">{{ status.target_user_id or '未设置' }}</div>
+  </div>
+  <div class="card">
+    <div class="label">已下载</div>
+    <div class="value">{{ db_stats.downloaded }}</div>
+  </div>
+  <div class="card">
+    <div class="label">涉及画师</div>
+    <div class="value">{{ db_stats.artists }}</div>
+  </div>
+  <div class="card">
+    <div class="label">关注画师</div>
+    <div class="value">{{ following_count }}</div>
+  </div>
+  <div class="card">
+    <div class="label">存储后端</div>
+    <div class="value small" style="font-weight:500">{{ backend }}</div>
+  </div>
+</div>
+
+{% set s = status.last_stats %}
+{% if s %}
+<div class="panel">
+  <h2>上次运行统计（{{ status.last_run }}）</h2>
+  <div class="cards">
+    <div class="card"><div class="label">画师</div><div class="value">{{ s.artists }}</div></div>
+    <div class="card"><div class="label">无新作品</div><div class="value">{{ s.artists_empty }}</div></div>
+    <div class="card"><div class="label">扫描作品</div><div class="value">{{ s.scanned }}</div></div>
+    <div class="card"><div class="label">成功下载</div><div class="value">{{ s.downloaded }}</div></div>
+    <div class="card"><div class="label">失败</div><div class="value">{{ s.failed }}</div></div>
+    <div class="card"><div class="label">排除 tag</div><div class="value">{{ s.skipped_exclude }}</div></div>
+    <div class="card"><div class="label">不匹配 tag</div><div class="value">{{ s.skipped_include }}</div></div>
+    <div class="card"><div class="label">收藏数不足</div><div class="value">{{ s.skipped_bookmark }}</div></div>
+    <div class="card"><div class="label">已存在</div><div class="value">{{ s.skipped_existing }}</div></div>
+    <div class="card"><div class="label">超出上限</div><div class="value">{{ s.skipped_limit }}</div></div>
+  </div>
+  {% if s.retry_later %}
+  <p class="small muted" style="margin:0">有 {{ s.retry_later }} 个作品下载失败，下一轮会自动重试。</p>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2>下载规则</h2>
+  <p class="small muted" style="margin-bottom:10px">
+    调度
+    {% if rules.run_cron %}cron {{ rules.run_cron }}
+    {% elif rules.poll_interval %}每 {{ rules.poll_interval }}s
+    {% else %}手动{% endif %} ·
+    画质 {{ rules.download_kind }} · 类型 {{ rules.illust_type }} ·
+    {% if rules.first_page_only %}仅首页{% else %}全部页面{% endif %} ·
+    单画师上限 {{ rules.max_per_artist or '不限' }} ·
+    最小收藏 {{ rules.min_bookmark_count }}
+  </p>
+  <div class="chips">
+    {% for t in tag_rules if t.mode == 'include' %}<span class="chip">匹配 {{ t.tag }}</span>{% endfor %}
+    {% for t in tag_rules if t.mode == 'exclude' %}<span class="chip">排除 {{ t.tag }}</span>{% endfor %}
+    {% if not tag_rules %}
+    <span class="muted small">尚未配置 tag 规则</span>
+    {% endif %}
+  </div>
+  <p class="small" style="margin:10px 0 0"><a href="{{ url_for('rules_page') }}">管理下载规则 →</a></p>
+</div>
+
+{% if recent %}
+<div class="panel">
+  <h2>最近下载</h2>
+  <div class="works">
+    {% for r in recent %}
+    <article class="work">
+      <a class="thumb" href="{{ url_for('downloaded_detail', illust_id=r.illust_id) }}">
+        {% if r.thumb_url %}
+        <img src="{{ url_for('thumb_for_work', illust_id=r.illust_id) }}" alt="{{ r.title }}"
+             loading="lazy" decoding="async" onerror="this.style.display='none';this.parentNode.classList.add('thumb-missing')">
+        {% else %}
+        <span class="placeholder">无预览</span>
+        {% endif %}
+        {% if r.page_count and r.page_count > 1 %}<span class="count">{{ r.page_count }}p</span>{% endif %}
+      </a>
+      <div class="body">
+        <a class="title" href="{{ url_for('downloaded_detail', illust_id=r.illust_id) }}">{{ r.title or 'untitled' }}</a>
+        <div class="meta">
+          <span>{{ r.author_name }}</span>
+          <span>{{ r.created_at }}</span>
+        </div>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<div class="panel empty">
+  <div class="big">还没有下载任何作品</div>
+  <p class="small">先去<a href="{{ url_for('browse') }}">作品浏览</a>看看关注画师，或者点击「立即运行」。</p>
+</div>
+{% endif %}
+
+<div class="panel">
+  <h2>最近日志</h2>
+  <pre class="log" style="max-height:280px">{{ log_text or '暂无日志' }}</pre>
+  <p class="small" style="margin:8px 0 0"><a href="{{ url_for('logs') }}">查看完整日志 →</a></p>
+</div>
+{% endblock %}

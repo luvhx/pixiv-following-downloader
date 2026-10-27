@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}下载规则 - Pixiv Following Downloader{% endblock %}
+{% block content %}
+{% macro rule_field(f) %}
+<div class="field">
+  <label class="name" for="{{ f.key }}">{{ f.label }}</label>
+  {% if f.kind == "select" %}
+  <select id="{{ f.key }}" name="{{ f.key }}" class="{{ 'invalid' if f.error }}">
+    {% for value, label in f.options %}
+    <option value="{{ value }}" {{ 'selected' if f.value|string == value }}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  {% elif f.kind == "int" %}
+  <input id="{{ f.key }}" name="{{ f.key }}" type="number" min="0" step="1"
+         value="{{ f.value }}" class="{{ 'invalid' if f.error }}">
+  {% elif f.kind == "float" %}
+  <input id="{{ f.key }}" name="{{ f.key }}" type="number" min="0" step="0.1"
+         value="{{ f.value }}" class="{{ 'invalid' if f.error }}">
+  {% else %}
+  <input id="{{ f.key }}" name="{{ f.key }}" type="text" value="{{ f.value }}"
+         class="{{ 'invalid' if f.error }}">
+  {% endif %}
+  {% if f.help %}<div class="help">{{ f.help }}</div>{% endif %}
+  {% if f.error %}<div class="error">{{ f.error }}</div>{% endif %}
+</div>
+{% endmacro %}
+
+<div class="page-head">
+  <h1>下载规则</h1>
+  <div class="spacer"></div>
+  <span class="muted small">规则保存在数据库，下一轮自动生效</span>
+</div>
+
+<form method="post" action="{{ url_for('rules_page') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+  <fieldset>
+    <legend>下载范围</legend>
+    <div class="form-grid">
+      {% for f in download_fields %}{{ rule_field(f) }}{% endfor %}
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>调度</legend>
+    <p class="small muted" style="margin:-4px 0 12px">
+      调度保存在数据库，保存后立即重新计算下次运行时间；
+      请求节流参数在「配置」页。
+    </p>
+    <div class="form-grid">
+      {% for f in schedule_fields %}{{ rule_field(f) }}{% endfor %}
+    </div>
+  </fieldset>
+  <div class="form-actions">
+    <button class="btn primary" type="submit">保存规则</button>
+  </div>
+</form>
+
+<div class="panel" style="margin-top:16px">
+  <h2>Tag 规则</h2>
+  <p class="small muted">
+    「匹配」是白名单：只要列表不为空，作品必须命中其中一个 tag 才下载。
+    「排除」命中任意一个 tag，或标题包含该词，就跳过该作品。
+    tag 匹配不区分大小写，并按完整 tag 名精确匹配。
+  </p>
+  <div class="tag-manager">
+    <div class="tag-block">
+      <h3>匹配（include）</h3>
+      <div class="hint">只下载包含这些 tag 的作品</div>
+      <form method="post" action="{{ url_for('rules_tag_add') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <input type="hidden" name="mode" value="include">
+        <input type="hidden" name="next" value="{{ url_for('rules_page') }}">
+        <div class="add-row">
+          <input type="text" name="tag" placeholder="输入 tag，例如 オリジナル" maxlength="100" required>
+          <button class="btn mini primary" type="submit">添加</button>
+        </div>
+      </form>
+      {% if include_tags %}
+      <ul>
+        {% for t in include_tags %}
+        <li>
+          <span class="tag-name">{{ t.tag }}</span>
+          <form method="post" action="{{ url_for('rules_tag_remove') }}">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <input type="hidden" name="tag" value="{{ t.tag }}">
+            <input type="hidden" name="next" value="{{ url_for('rules_page') }}">
+            <button class="btn mini danger" type="submit">移除</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="tag-empty">没有匹配 tag，当前下载全部作品（除排除项）。</div>
+      {% endif %}
+    </div>
+
+    <div class="tag-block">
+      <h3>排除（exclude）</h3>
+      <div class="hint">命中这些 tag 或标题关键词的作品不下载</div>
+      <form method="post" action="{{ url_for('rules_tag_add') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <input type="hidden" name="mode" value="exclude">
+        <input type="hidden" name="next" value="{{ url_for('rules_page') }}">
+        <div class="add-row">
+          <input type="text" name="tag" placeholder="输入 tag 或标题关键词" maxlength="100" required>
+          <button class="btn mini primary" type="submit">添加</button>
+        </div>
+        <label class="small" style="display:flex;align-items:center;gap:6px;margin-top:8px">
+          <input type="checkbox" name="purge" value="1">
+          添加时同时删除已下载的匹配作品
+        </label>
+      </form>
+      {% if exclude_tags %}
+      <ul>
+        {% for t in exclude_tags %}
+        <li>
+          <span class="tag-name">{{ t.tag }}</span>
+          <form method="post" action="{{ url_for('rules_tag_remove') }}">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <input type="hidden" name="tag" value="{{ t.tag }}">
+            <input type="hidden" name="next" value="{{ url_for('rules_page') }}">
+            <button class="btn mini danger" type="submit">移除</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="tag-empty">没有排除 tag。</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>增量抓取</h2>
+  <p class="small muted">
+    每轮只抓取画师水位之后的新作品。修改规则后如果想重新检查旧作品，
+    可以重置水位，下一轮会从头扫描（已下载的作品会自动跳过）。
+  </p>
+  <form method="post" action="{{ url_for('rules_reset_watermarks') }}"
+        onsubmit="return confirm('重置所有画师的抓取水位？下一轮会从头扫描，耗时较长。');">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <button class="btn" type="submit">重置抓取水位</button>
+  </form>
+</div>
+
+{% endblock %}
+

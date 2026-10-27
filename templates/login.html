@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}登录 - Pixiv Following Downloader{% endblock %}
+{% block content %}
+<div class="auth-wrap">
+  <div class="brand">
+    <img src="{{ url_for('static', filename='logo.svg') }}" alt="" width="26" height="26">
+    <span>Pixiv Following Downloader</span>
+  </div>
+  <div class="auth-box">
+    <h1 style="font-size:18px">登录</h1>
+    {% if error %}<div class="flash flash-error">{{ error }}</div>{% endif %}
+    <form method="post" action="{{ url_for('login') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="field">
+        <label class="name" for="username">用户名</label>
+        <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+      </div>
+      <div class="field">
+        <label class="name" for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn primary" type="submit" style="width:100%">登录</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

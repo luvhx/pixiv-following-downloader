@@ -1,0 +1,21 @@
+# 默认使用已发布镜像；本地构建：docker compose up -d --build
+services:
+  pixiv-downloader:
+    image: ${IMAGE_REPO:-ghcr.io/luvhx/pixiv-following-downloader}:${IMAGE_TAG:-latest}
+    build: .
+    container_name: pixiv-following-downloader
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - TZ=Asia/Shanghai
+    ports:
+      - "${WEBUI_PORT:-8971}:${WEBUI_PORT:-8971}"
+    volumes:
+      - ./data:/app/data
+      # 挂载 .env，使 WebUI 中修改的配置可以持久化
+      - ./.env:/app/.env
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

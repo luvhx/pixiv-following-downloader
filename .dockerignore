@@ -1,0 +1,23 @@
+# 敏感配置与运行数据不应进入镜像
+.env
+.env.*
+!.env.example
+data/
+
+# Python 缓存与虚拟环境
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+tests/
+
+# 版本控制与编辑器
+.git/
+.github/
+.gitignore
+.idea/
+.vscode/
+*.log

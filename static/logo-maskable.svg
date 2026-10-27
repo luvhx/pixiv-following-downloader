@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Pixiv Following Downloader">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4F8CFF"/>
+      <stop offset="0.52" stop-color="#6D6BFF"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.28" cy="0.2" r="0.7">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <rect width="512" height="512" fill="url(#glow)"/>
+  <g transform="translate(256 256) scale(0.72) translate(-256 -256)">
+    <path fill="#FFFFFF" fill-rule="evenodd" d="M 170 124 H 292 A 102 102 0 0 1 292 328 H 170 Z M 292 184 A 42 42 0 1 1 292 268 A 42 42 0 1 1 292 184 Z"/>
+    <rect x="170" y="124" width="58" height="250" rx="29" fill="#FFFFFF"/>
+    <path fill="#FF5D8F" d="M 132 348 H 266 L 199 448 Z"/>
+  </g>
+</svg>
