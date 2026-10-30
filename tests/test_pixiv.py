@@ -314,6 +314,7 @@ class DownloadTest(unittest.TestCase):
             "page_count": pages,
             "user": {"id": 55, "name": "Artist"},
             "tags": [{"name": "tagA"}, {"name": "tagB", "translated_name": "tagB-en"}],
+            "total_bookmarks": 42,
             "meta_pages": [
                 {"page_index": i, "image_urls": {
                     "original": f"https://i.pximg.net/img-original/img/2024/01/01/00/00/00/1001_p{i}.jpg",

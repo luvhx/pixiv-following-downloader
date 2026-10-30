@@ -34,9 +34,28 @@
 {% endif %}
 
 {% if works %}
+<form id="batch-download-form" method="post" action="{{ url_for('browse_download_batch') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+  <input type="hidden" name="next" value="{{ request.full_path }}">
+</form>
+
+<div class="batchbar">
+  <label class="small" style="display:flex;align-items:center;gap:6px">
+    <input type="checkbox" id="select-all"> 全选本页
+  </label>
+  <span class="muted small" id="selected-count">未选择</span>
+  <div class="spacer"></div>
+  <button type="submit" form="batch-download-form" class="btn mini primary"
+          id="batch-download" disabled>下载选中</button>
+</div>
+
 <div class="works">
   {% for w in works %}
   <article class="work">
+    {% if not w.downloaded and w.illust_id not in pending %}
+    <input type="checkbox" class="select-box" form="batch-download-form" name="illust_id"
+           value="{{ w.illust_id }}" aria-label="选择《{{ w.title }}》">
+    {% endif %}
     <a class="thumb" href="https://www.pixiv.net/artworks/{{ w.illust_id }}" target="_blank" rel="noopener">
       {% if w.thumb_url %}
       <img src="{{ url_for('thumb_proxy', u=w.thumb_url) }}" alt="{{ w.title }}"
@@ -120,4 +139,28 @@
   <p class="small">当前页为空，可能已经翻到末尾。</p>
 </div>
 {% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var boxes = Array.prototype.slice.call(document.querySelectorAll(".select-box"));
+  var all = document.getElementById("select-all");
+  var counter = document.getElementById("selected-count");
+  var submit = document.getElementById("batch-download");
+  if (!all || !counter || !submit) return;
+  function refresh() {
+    var n = boxes.filter(function (b) { return b.checked; }).length;
+    counter.textContent = n ? ("已选 " + n + " 个") : "未选择";
+    submit.disabled = n === 0;
+    all.checked = n > 0 && n === boxes.length;
+    all.indeterminate = n > 0 && n < boxes.length;
+  }
+  all.addEventListener("change", function () {
+    boxes.forEach(function (b) { b.checked = all.checked; });
+    refresh();
+  });
+  boxes.forEach(function (b) { b.addEventListener("change", refresh); });
+  refresh();
+})();
+</script>
 {% endblock %}

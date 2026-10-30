@@ -390,6 +390,56 @@ class WebUITest(unittest.TestCase):
         self.assertEqual(self.db.artist_watermark(55), 0)
 
     # ---------- 已下载操作 ----------
+    def test_multipage_viewer(self):
+        artist = self.root / "downloads" / "Artist"
+        (artist / "2_a.jpg").write_bytes(b"AAA")
+        (artist / "2_b.jpg").write_bytes(b"BBB")
+        self.db.mark_downloaded(
+            2, "Multi page", 10, "Artist", ["tag1"], 2,
+            files=["Artist/2_a.jpg", "Artist/2_b.jpg"],
+            thumb_url="https://i.pximg.net/m.jpg", bookmarks=999,
+        )
+        self.storage_patch()
+        client = self.make_client()
+        detail = client.get("/downloaded/2?p=2&tag=tag1&sort=bookmarks&page=1").data.decode()
+        self.assertIn("第 2 / 2 页", detail)
+        self.assertIn("p=2", detail)
+        img2 = client.get("/image/2?p=2")
+        self.assertEqual(img2.data, b"BBB")
+        img2.close()
+        self.assertEqual(client.get("/image/2?p=3").status_code, 404)
+        img1 = client.get("/image/2")
+        self.assertEqual(img1.data, b"AAA")
+        img1.close()
+
+    def test_gallery_sort_by_bookmarks(self):
+        self.db.mark_downloaded(
+            2, "High marks", 10, "Artist", ["tag1"], 1,
+            files=["Artist/2_a.jpg"], bookmarks=999,
+        )
+        self.storage_patch()
+        client = self.make_client()
+        html = client.get("/downloaded?sort=bookmarks").data.decode()
+        self.assertLess(html.index("High marks"), html.index("Test work"))
+        self.assertIn('<option value="bookmarks" selected>', html)
+        self.assertIn("999 收藏", html)
+
+    def test_browse_batch_download(self):
+        api = FakeAPI()
+        queue = StubQueue()
+        with mock.patch.object(webui, "DownloadQueue", return_value=queue):
+            app = webui.create_app(api, self.db, self.rules, None)
+        app.jinja_env.undefined = StrictUndefined
+        client = app.test_client()
+        client.get("/browse/55")
+        token = self.csrf(client)
+        resp = client.post("/browse/download-batch", data={
+            "illust_id": ["1001", "1"], "_csrf": token, "next": "/browse/55",
+        }, follow_redirects=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(queue.submitted, [1001])
+        self.assertIn("跳过 1", resp.data.decode())
+
     def test_favorite_and_delete(self):
         self.storage_patch()
         client = self.make_client()

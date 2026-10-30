@@ -6,14 +6,26 @@
 <div class="detail">
   <div class="preview">
     {% if files %}
-    <a href="{{ url_for('work_image', illust_id=row.illust_id) }}" target="_blank" rel="noopener">
-      <img src="{{ url_for('work_image', illust_id=row.illust_id) }}" alt="{{ row.title }}">
+    <a href="{{ url_for('work_image', illust_id=row.illust_id, p=page) }}" target="_blank" rel="noopener">
+      <img src="{{ url_for('work_image', illust_id=row.illust_id, p=page) }}" alt="{{ row.title }}">
     </a>
     {% else %}
     <div class="empty">图片文件缺失</div>
     {% endif %}
-    {% if files|length > 1 %}
-    <p class="small muted" style="margin:8px 0 0">共 {{ files|length }} 个文件，当前显示第 1 页</p>
+    {% if page_count > 1 %}
+    <div class="pager">
+      {% if prev_url %}<a class="btn mini" href="{{ prev_url }}" title="上一页">‹</a>{% endif %}
+      {% for n in range(1, page_count + 1) %}
+        {% if page_count <= 12 or n == 1 or n == page_count or (n >= page - 2 and n <= page + 2) %}
+          <a class="btn mini {{ 'primary' if n == page }}"
+             href="{{ url_for('downloaded_detail', illust_id=row.illust_id, p=n, **page_args) }}">{{ n }}</a>
+        {% elif n == 2 or n == page_count - 1 %}
+          <span class="muted small">…</span>
+        {% endif %}
+      {% endfor %}
+      {% if page_next_url %}<a class="btn mini" href="{{ page_next_url }}" title="下一页">›</a>{% endif %}
+    </div>
+    <p class="small muted" style="margin:6px 0 0">第 {{ page }} / {{ page_count }} 页 · 可用键盘 ← → 翻页</p>
     {% endif %}
   </div>
 
@@ -55,12 +67,13 @@
       <div><dt>类型</dt><dd>{{ row.illust_type or 'illust' }}</dd></div>
       <div><dt>页数</dt><dd>{{ row.page_count or 1 }}</dd></div>
       <div><dt>文件数</dt><dd>{{ files|length }}</dd></div>
+      <div><dt>收藏数</dt><dd>{{ row.bookmarks or 0 }}</dd></div>
       <div><dt>下载时间</dt><dd>{{ row.created_at }}</dd></div>
-      <div><dt>收藏</dt><dd>{{ '是' if row.favorite else '否' }}</dd></div>
+      <div><dt>本地收藏</dt><dd>{{ '是' if row.favorite else '否' }}</dd></div>
     </dl>
 
     <div class="btn-row">
-      <a class="btn" href="{{ url_for('work_image', illust_id=row.illust_id) }}" target="_blank">原图</a>
+      <a class="btn" href="{{ url_for('work_image', illust_id=row.illust_id, p=page) }}" target="_blank">原图</a>
       <form method="post" action="{{ url_for('downloaded_favorite', illust_id=row.illust_id) }}">
         <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
         <input type="hidden" name="next" value="{{ next_url }}">
@@ -99,5 +112,21 @@
     {% endfor %}
   </div>
 </div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+{% if page_count > 1 %}
+<script>
+(function () {
+  var prev = {{ prev_url|tojson }};
+  var next = {{ page_next_url|tojson }};
+  document.addEventListener("keydown", function (e) {
+    var tag = (e.target && e.target.tagName) || "";
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return;
+    if (e.key === "ArrowLeft" && prev) location.href = prev;
+    if (e.key === "ArrowRight" && next) location.href = next;
+  });
+})();
+</script>
 {% endif %}
 {% endblock %}

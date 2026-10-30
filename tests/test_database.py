@@ -70,6 +70,20 @@ class DownloadDBTest(unittest.TestCase):
         self.assertEqual(self.db.list_downloaded(tag="landscape")["total"], 1)
         self.assertEqual(normalize_tag("  Landscape "), "landscape")
 
+    def test_bookmarks_and_sort(self):
+        self._add(1, title="A")
+        self._add(2, title="B")
+        self.db.mark_downloaded(3, "C", 10, "画师", ["x"], 5, files=["a.jpg"],
+                                bookmarks=500)
+        self.assertEqual(self.db.get(3)["bookmarks"], 500)
+
+        ids = lambda sort: [r["illust_id"] for r in self.db.list_downloaded(sort=sort)["rows"]]
+        self.assertEqual(ids("bookmarks")[:1], [3])
+        self.assertEqual(ids("pages")[:1], [3])
+        self.assertEqual(ids("title"), [1, 2, 3])
+        # 未知排序回落到最新
+        self.assertEqual(ids("bogus"), ids("new"))
+
     def test_favorites(self):
         self._add(1)
         self._add(2, favorite=True)
@@ -184,6 +198,35 @@ class DownloadDBTest(unittest.TestCase):
             t.join()
         self.assertEqual(errors, [])
         self.assertEqual(self.db.stats()["downloaded"], 40)
+
+
+class BookmarksMigrationTest(unittest.TestCase):
+    def test_old_table_gets_bookmarks_column(self):
+        tmp = tempfile.TemporaryDirectory()
+        path = os.path.join(tmp.name, "old.db")
+        conn = sqlite3.connect(path)
+        conn.execute("""
+            CREATE TABLE downloaded (
+                illust_id INTEGER PRIMARY KEY, title TEXT, author_id INTEGER,
+                author_name TEXT, page_count INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                files TEXT, favorite INTEGER DEFAULT 0
+            )
+        """)
+        conn.execute(
+            "INSERT INTO downloaded (illust_id, title, files) VALUES (1, 'old', '[]')"
+        )
+        conn.commit()
+        conn.close()
+
+        db = DownloadDB(path)
+        try:
+            self.assertEqual(db.get(1)["bookmarks"], 0)
+            cols = [r[1] for r in db._conn().execute("PRAGMA table_info(downloaded)")]
+            self.assertIn("bookmarks", cols)
+        finally:
+            db.close()
+            tmp.cleanup()
 
 
 class FollowingMigrationTest(unittest.TestCase):

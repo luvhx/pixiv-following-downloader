@@ -446,6 +446,7 @@ def download_illust(api: AppPixivAPI, illust: dict, db: DownloadDB,
             tags, page_count, files=saved_paths,
             thumb_url=select_thumb_url(illust),
             illust_type=illust.get("type") or None,
+            bookmarks=illust.get("total_bookmarks") or 0,
         )
         logger.info(
             f"✔ 已下载 [{author_name}] {title} "

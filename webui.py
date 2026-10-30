@@ -938,6 +938,42 @@ def create_app(api, db, rules, scheduler) -> Flask:
             flash(f"作品 {illust_id} 已在下载队列中", "warn")
         return redirect(_safe_next(request.form.get("next"), url_for("browse")))
 
+    @app.post("/browse/download-batch")
+    def browse_download_batch():
+        if not download_queue:
+            flash("下载队列不可用（Pixiv 未认证）", "error")
+            return redirect(_safe_next(request.form.get("next"), url_for("browse")))
+        ids = []
+        for raw in request.form.getlist("illust_id"):
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if value not in ids:
+                ids.append(value)
+        if not ids:
+            flash("没有选中任何作品", "warn")
+            return redirect(_safe_next(request.form.get("next"), url_for("browse")))
+        if len(ids) > 100:
+            flash("一次最多加入 100 个作品", "warn")
+            return redirect(_safe_next(request.form.get("next"), url_for("browse")))
+
+        already = db.downloaded_ids(ids) if db else set()
+        added = skipped = 0
+        for illust_id in ids:
+            if illust_id in already:
+                skipped += 1
+                continue
+            if download_queue.submit(illust_id):
+                added += 1
+            else:
+                skipped += 1
+        message = f"已加入下载队列：{added} 个作品"
+        if skipped:
+            message += f"，跳过 {skipped} 个（已下载或已在队列）"
+        flash(message, "ok" if added else "warn")
+        return redirect(_safe_next(request.form.get("next"), url_for("browse")))
+
     # ---------- 已下载（原画廊）----------
     @app.get("/downloaded")
     def downloaded():
@@ -945,11 +981,14 @@ def create_app(api, db, rules, scheduler) -> Flask:
         tag = (request.args.get("tag") or "").strip()
         artist_id = request.args.get("artist", type=int) or None
         favorites_only = request.args.get("fav") in ("1", "true", "yes")
+        sort = request.args.get("sort") or "new"
+        if sort not in ("new", "old", "bookmarks", "pages", "title"):
+            sort = "new"
         page = max(1, request.args.get("page", type=int) or 1)
         per_page = 24
         data = db.list_downloaded(
             q=q, tag=tag, artist_id=artist_id, favorites_only=favorites_only,
-            offset=(page - 1) * per_page, limit=per_page,
+            offset=(page - 1) * per_page, limit=per_page, sort=sort,
         ) if db else {"total": 0, "rows": []}
 
         total_pages = max(1, ceil(data["total"] / per_page))
@@ -957,7 +996,7 @@ def create_app(api, db, rules, scheduler) -> Flask:
             page = total_pages
             data = db.list_downloaded(
                 q=q, tag=tag, artist_id=artist_id, favorites_only=favorites_only,
-                offset=(page - 1) * per_page, limit=per_page,
+                offset=(page - 1) * per_page, limit=per_page, sort=sort,
             ) if db else {"total": 0, "rows": []}
 
         items = []
@@ -974,6 +1013,7 @@ def create_app(api, db, rules, scheduler) -> Flask:
             favorite_tags=db.favorite_tags() if db else [],
             artists=db.artist_options() if db else [],
             tags=db.tag_options() if db else [],
+            sort=sort,
             page=page, total_pages=total_pages,
             pages=_page_numbers(page, total_pages),
         )
@@ -1015,10 +1055,22 @@ def create_app(api, db, rules, scheduler) -> Flask:
                 item["tags"] = related_tags.get(item["illust_id"], [])
 
         back_args = {}
-        for key in ("q", "tag", "artist", "page", "fav"):
+        for key in ("q", "tag", "artist", "page", "fav", "sort"):
             value = request.args.get(key)
             if value:
                 back_args[key] = value
+
+        page_count = max(1, len(files))
+        page = request.args.get("p", type=int) or 1
+        page = min(max(1, page), page_count)
+        prev_url = (
+            url_for("downloaded_detail", illust_id=illust_id, p=page - 1, **back_args)
+            if page > 1 else None
+        )
+        page_next_url = (
+            url_for("downloaded_detail", illust_id=illust_id, p=page + 1, **back_args)
+            if page < page_count else None
+        )
         next_url = request.full_path if request.query_string else request.path
         return render_template(
             "work_detail.html", active="downloaded",
@@ -1026,6 +1078,9 @@ def create_app(api, db, rules, scheduler) -> Flask:
             favorite_tags=db.favorite_tags() if db else [],
             back_url=url_for("downloaded", **back_args),
             next_url=next_url,
+            page=page, page_count=page_count,
+            prev_url=prev_url, page_next_url=page_next_url,
+            page_args=back_args,
         )
 
     @app.post("/downloaded/<int:illust_id>/favorite")
@@ -1081,28 +1136,32 @@ def create_app(api, db, rules, scheduler) -> Flask:
             files = resolve_files(storage, db, row)
             if not files:
                 abort(404)
+            page = request.args.get("p", type=int) or 1
+            if not (1 <= page <= len(files)):
+                abort(404)
+            file = files[page - 1]
 
             if config.IMAGE_DELIVERY == "redirect" and isinstance(storage, WebDAVStorage):
-                url = webdav_public_url(files[0], config.WEBDAV_ROOT)
+                url = webdav_public_url(file, config.WEBDAV_ROOT)
                 if url:
                     resp = redirect(url, code=302)
                     resp.headers["Cache-Control"] = "private, max-age=3600"
                     return resp
 
             if isinstance(storage, LocalStorage):
-                path = storage.abs_path(files[0])
+                path = storage.abs_path(file)
                 if os.path.exists(path):
                     resp = send_file(
-                        path, mimetype=image_mime(files[0]),
+                        path, mimetype=image_mime(file),
                         max_age=86400, conditional=True,
                     )
                     resp.headers["Cache-Control"] = "private, max-age=86400"
                     return resp
 
             if isinstance(storage, WebDAVStorage):
-                upstream = storage.open_stream(files[0])
+                upstream = storage.open_stream(file)
                 resp = Response(
-                    _iter_upstream(upstream), mimetype=image_mime(files[0]),
+                    _iter_upstream(upstream), mimetype=image_mime(file),
                 )
                 for header in ("Content-Length", "ETag", "Last-Modified"):
                     value = upstream.headers.get(header)
@@ -1203,6 +1262,9 @@ def create_app(api, db, rules, scheduler) -> Flask:
             args["page"] = page
         if request.form.get("fav") in ("1", "true", "yes"):
             args["fav"] = 1
+        sort = (request.form.get("sort") or "").strip()
+        if sort and sort != "new":
+            args["sort"] = sort
         return url_for("downloaded", **args)
 
     # ---------- 日志 ----------

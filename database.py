@@ -115,6 +115,7 @@ class DownloadDB:
             self._create_tables(conn)
             self._migrate_favorite_tags(conn)
             self._migrate_following(conn)
+            self._migrate_downloaded_columns(conn)
             conn.execute("PRAGMA foreign_keys=ON")
             self._invalidate_meta()
 
@@ -129,6 +130,7 @@ class DownloadDB:
                 page_count  INTEGER DEFAULT 1,
                 thumb_url   TEXT,
                 illust_type TEXT,
+                bookmarks   INTEGER DEFAULT 0,
                 favorite    INTEGER DEFAULT 0,
                 created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 files       TEXT NOT NULL DEFAULT '[]'
@@ -243,6 +245,15 @@ class DownloadDB:
         )
 
     @staticmethod
+    def _migrate_downloaded_columns(conn: sqlite3.Connection):
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(downloaded)")]
+        if cols and "bookmarks" not in cols:
+            logger.info("数据库迁移：downloaded 增加 bookmarks 列")
+            conn.execute(
+                "ALTER TABLE downloaded ADD COLUMN bookmarks INTEGER DEFAULT 0"
+            )
+
+    @staticmethod
     def _migrate_following(conn: sqlite3.Connection):
         cols = [r[1] for r in conn.execute("PRAGMA table_info(following)")]
         if cols and "previews" not in cols:
@@ -269,7 +280,8 @@ class DownloadDB:
         return {r["illust_id"] for r in rows}
 
     def mark_downloaded(self, illust_id, title, author_id, author_name, tags,
-                        page_count, files=None, thumb_url=None, illust_type=None):
+                        page_count, files=None, thumb_url=None, illust_type=None,
+                        bookmarks=0):
         files_json = json.dumps(files or [], ensure_ascii=False)
         tag_list = []
         for tag in tags or []:
@@ -281,19 +293,20 @@ class DownloadDB:
             conn.execute(
                 """INSERT OR IGNORE INTO downloaded
                    (illust_id, title, author_id, author_name, page_count,
-                    files, thumb_url, illust_type)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    files, thumb_url, illust_type, bookmarks)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (illust_id, title, author_id, author_name, page_count,
-                 files_json, thumb_url, illust_type),
+                 files_json, thumb_url, illust_type, int(bookmarks or 0)),
             )
             # 旧记录补齐文件列表 / 缩略图
             conn.execute(
                 """UPDATE downloaded
                    SET files = CASE WHEN files IS NULL OR files = '[]' THEN ? ELSE files END,
                        thumb_url = COALESCE(thumb_url, ?),
-                       illust_type = COALESCE(illust_type, ?)
+                       illust_type = COALESCE(illust_type, ?),
+                       bookmarks = CASE WHEN IFNULL(bookmarks, 0) = 0 THEN ? ELSE bookmarks END
                    WHERE illust_id = ?""",
-                (files_json, thumb_url, illust_type, illust_id),
+                (files_json, thumb_url, illust_type, int(bookmarks or 0), illust_id),
             )
             for tag, norm in tag_list:
                 conn.execute(
@@ -409,8 +422,17 @@ class DownloadDB:
         )
         args.extend([like, like, f"%{_escape_like(normalize_tag(q))}%"])
 
+    _DOWNLOAD_ORDER = {
+        "new": "created_at DESC, illust_id DESC",
+        "old": "created_at ASC, illust_id ASC",
+        "bookmarks": "bookmarks DESC, created_at DESC, illust_id DESC",
+        "pages": "page_count DESC, created_at DESC, illust_id DESC",
+        "title": "title COLLATE NOCASE ASC, illust_id DESC",
+    }
+
     def list_downloaded(self, q=None, tag=None, artist_id=None,
-                        favorites_only=False, offset=0, limit=24) -> dict:
+                        favorites_only=False, offset=0, limit=24,
+                        sort="new") -> dict:
         where, args = [], []
         if q:
             self._search_filter(where, args, q)
@@ -427,11 +449,13 @@ class DownloadDB:
         total = conn.execute(
             f"SELECT COUNT(*) AS c FROM downloaded {where_sql}", args
         ).fetchone()["c"]
+        order = self._DOWNLOAD_ORDER.get(sort, self._DOWNLOAD_ORDER["new"])
         rows = conn.execute(
             f"""SELECT illust_id, title, author_id, author_name, page_count,
-                       created_at, files, favorite, thumb_url, illust_type
+                       created_at, files, favorite, thumb_url, illust_type,
+                       bookmarks
                 FROM downloaded {where_sql}
-                ORDER BY created_at DESC, illust_id DESC
+                ORDER BY {order}
                 LIMIT ? OFFSET ?""",
             args + [limit, offset],
         ).fetchall()

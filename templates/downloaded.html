@@ -19,11 +19,18 @@
   </select>
   <input type="text" name="tag" value="{{ tag }}" placeholder="tag 精确筛选" list="taglist">
   <datalist id="taglist">{% for t in tags %}<option value="{{ t }}">{% endfor %}</datalist>
+  <select name="sort">
+    <option value="new" {{ 'selected' if sort == 'new' }}>最新下载</option>
+    <option value="old" {{ 'selected' if sort == 'old' }}>最早下载</option>
+    <option value="bookmarks" {{ 'selected' if sort == 'bookmarks' }}>收藏最多</option>
+    <option value="pages" {{ 'selected' if sort == 'pages' }}>页数最多</option>
+    <option value="title" {{ 'selected' if sort == 'title' }}>标题</option>
+  </select>
   <label class="small" style="display:flex;align-items:center;gap:5px">
     <input type="checkbox" name="fav" value="1" {% if favorites_only %}checked{% endif %}> 仅收藏
   </label>
   <button class="btn primary" type="submit">筛选</button>
-  {% if q or tag or artist_id or favorites_only %}
+  {% if q or tag or artist_id or favorites_only or sort != 'new' %}
   <a class="btn" href="{{ url_for('downloaded') }}">清除</a>
   {% endif %}
 </form>
@@ -56,6 +63,7 @@
   <input type="hidden" name="artist" value="{{ artist_id or '' }}">
   <input type="hidden" name="page" value="{{ page }}">
   <input type="hidden" name="fav" value="{{ 1 if favorites_only else '' }}">
+  <input type="hidden" name="sort" value="{{ sort }}">
 </form>
 
 <div class="batchbar">
@@ -75,7 +83,7 @@
     <input type="checkbox" class="select-box" form="batch-form" name="illust_id"
            value="{{ r.illust_id }}" title="选择"
            aria-label="选择《{{ r.title or 'untitled' }}》">
-    <a class="thumb" href="{{ url_for('downloaded_detail', illust_id=r.illust_id, q=q or None, tag=tag or None, artist=artist_id or None, page=page, fav=1 if favorites_only else None) }}">
+    <a class="thumb" href="{{ url_for('downloaded_detail', illust_id=r.illust_id, q=q or None, tag=tag or None, artist=artist_id or None, page=page, fav=1 if favorites_only else None, sort=None if sort == 'new' else sort) }}">
       {% if r.thumb_url %}
       <img src="{{ url_for('thumb_for_work', illust_id=r.illust_id) }}" alt="{{ r.title }}"
            loading="lazy" decoding="async" onerror="this.style.display='none';this.parentNode.classList.add('thumb-missing')">
@@ -85,15 +93,16 @@
       {% if r.page_count and r.page_count > 1 %}<span class="count">{{ r.page_count }}p</span>{% endif %}
     </a>
     <div class="body">
-      <a class="title" href="{{ url_for('downloaded_detail', illust_id=r.illust_id, q=q or None, tag=tag or None, artist=artist_id or None, page=page, fav=1 if favorites_only else None) }}">{{ r.title or 'untitled' }}</a>
+      <a class="title" href="{{ url_for('downloaded_detail', illust_id=r.illust_id, q=q or None, tag=tag or None, artist=artist_id or None, page=page, fav=1 if favorites_only else None, sort=None if sort == 'new' else sort) }}">{{ r.title or 'untitled' }}</a>
       <div class="meta">
-        <a href="{{ url_for('downloaded', artist=r.author_id, q=q or None) }}">{{ r.author_name }}</a>
+        <a href="{{ url_for('downloaded', artist=r.author_id, q=q or None, sort=None if sort == 'new' else sort) }}">{{ r.author_name }}</a>
+        <span>{{ r.bookmarks or 0 }} 收藏</span>
         <span>{{ r.created_at }}</span>
       </div>
       {% if r.tags %}
       <div class="chips" style="margin-top:6px">
         {% for t in r.tags[:6] %}
-        <a class="chip {{ 'active' if t == tag }}" href="{{ url_for('downloaded', tag=t, q=q or None) }}">{{ t }}</a>
+        <a class="chip {{ 'active' if t == tag }}" href="{{ url_for('downloaded', tag=t, q=q or None, sort=None if sort == 'new' else sort) }}">{{ t }}</a>
         {% endfor %}
       </div>
       {% endif %}
@@ -114,6 +123,7 @@
           <input type="hidden" name="artist" value="{{ artist_id or '' }}">
           <input type="hidden" name="page" value="{{ page }}">
           <input type="hidden" name="fav" value="{{ 1 if favorites_only else '' }}">
+          <input type="hidden" name="sort" value="{{ sort }}">
           <button class="btn mini danger" type="submit">删除</button>
         </form>
       </div>
@@ -127,7 +137,7 @@
   {% for p in pages %}
     {% if p is none %}<span>…</span>
     {% elif p == page %}<span class="cur">{{ p }}</span>
-    {% else %}<a href="{{ url_for('downloaded', q=q or None, tag=tag or None, artist=artist_id or None, page=p, fav=1 if favorites_only else None) }}">{{ p }}</a>{% endif %}
+    {% else %}<a href="{{ url_for('downloaded', q=q or None, tag=tag or None, artist=artist_id or None, page=p, fav=1 if favorites_only else None, sort=None if sort == 'new' else sort) }}">{{ p }}</a>{% endif %}
   {% endfor %}
 </div>
 {% endif %}
