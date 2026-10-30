@@ -117,6 +117,33 @@ class SchedulerRunTest(unittest.TestCase):
         self.run_once([illust(10)])
         self.assertEqual([a["artist_id"] for a in self.db.following()], [55])
 
+    def test_ignored_artist_is_skipped(self):
+        self.db.replace_following(FOLLOWING)
+        self.db.set_artist_ignored(55, True)
+        with mock.patch.object(scheduler, "get_following_users", return_value=FOLLOWING), \
+             mock.patch.object(scheduler, "get_user_illusts") as get_illusts, \
+             mock.patch.object(scheduler, "download_illust", return_value=True):
+            stats = scheduler.run_once(object(), self.db, "123", make_rules())
+        get_illusts.assert_not_called()
+        self.assertEqual(stats["skipped_ignored"], 1)
+
+    def test_progress_callback(self):
+        events = {}
+
+        def progress(**fields):
+            events.update(fields)
+
+        with mock.patch.object(scheduler, "get_following_users", return_value=FOLLOWING), \
+             mock.patch.object(scheduler, "get_user_illusts",
+                               return_value=([illust(10)], True)), \
+             mock.patch.object(scheduler, "download_illust", return_value=True):
+            scheduler.run_once(
+                object(), self.db, "123", make_rules(), progress=progress,
+            )
+        self.assertEqual(events["total"], 1)
+        self.assertEqual(events["artist"], "Artist")
+        self.assertEqual(events["work"], "work-10")
+
     def test_pause_stops_early(self):
         with mock.patch.object(scheduler, "get_following_users", return_value=FOLLOWING):
             stats = scheduler.run_once(
@@ -168,6 +195,14 @@ class SchedulerRulesTest(unittest.TestCase):
         with mock.patch.object(self.sched, "_run_once") as run:
             self.sched._initial_run()
             run.assert_called_once()
+
+    def test_status_progress(self):
+        self.sched._set_progress(index=1, total=2, artist="A", work="W")
+        progress = self.sched.status()["progress"]
+        self.assertEqual(progress["index"], 1)
+        self.assertEqual(progress["artist"], "A")
+        self.sched._clear_progress()
+        self.assertEqual(self.sched.status()["progress"], {})
 
     def test_schedule_change_wakes_waiter(self):
         self.sched.notify_schedule_changed()

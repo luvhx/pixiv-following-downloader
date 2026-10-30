@@ -15,6 +15,7 @@ import config  # noqa: E402
 import webui  # noqa: E402
 from database import DownloadDB  # noqa: E402
 from rules import Rules  # noqa: E402
+from scheduler import Scheduler  # noqa: E402
 from storage import LocalStorage  # noqa: E402
 
 
@@ -328,6 +329,7 @@ class WebUITest(unittest.TestCase):
             "download_kind": "large", "illust_type": "all",
             "first_page_only": "true", "max_per_artist": "5",
             "min_bookmark_count": "0",
+            "ugoira_format": "webm", "folder_template": "", "filename_template": "",
             "run_cron": "0 */6 * * *", "run_cron_immediate": "true",
             "poll_interval": "0",
             "_csrf": token,
@@ -343,6 +345,7 @@ class WebUITest(unittest.TestCase):
             "download_kind": "nope", "illust_type": "all",
             "first_page_only": "false", "max_per_artist": "5",
             "min_bookmark_count": "0",
+            "ugoira_format": "webm", "folder_template": "", "filename_template": "",
             "run_cron": "0 */6 * * *", "run_cron_immediate": "false",
             "poll_interval": "0",
             "_csrf": token,
@@ -411,6 +414,20 @@ class WebUITest(unittest.TestCase):
         img1 = client.get("/image/2")
         self.assertEqual(img1.data, b"AAA")
         img1.close()
+
+    def test_ugoira_video_detail(self):
+        artist = self.root / "downloads" / "Artist"
+        (artist / "3_anim.webm").write_bytes(b"webmdata")
+        self.db.mark_downloaded(
+            3, "Anim", 10, "Artist", ["动图"], 1,
+            files=["Artist/3_anim.webm"], thumb_url="https://i.pximg.net/a.jpg",
+            illust_type="ugoira",
+        )
+        self.storage_patch()
+        client = self.make_client()
+        detail = client.get("/downloaded/3").data.decode()
+        self.assertIn("<video", detail)
+        self.assertEqual(client.get("/image/3").content_type, "video/webm")
 
     def test_gallery_sort_by_bookmarks(self):
         self.db.mark_downloaded(
@@ -560,6 +577,65 @@ class WebUITest(unittest.TestCase):
         self.assertEqual(resp.status_code, 302)
         self.assertEqual([t["tag"] for t in self.rules.tags("exclude")], ["tagA"])
         self.assertIn("已在排除规则中", client.get("/browse/55").data.decode())
+
+    def test_browse_ignored_artist(self):
+        self.db.replace_following([
+            {"user_id": 55, "user_name": "Artist"},
+            {"user_id": 66, "user_name": "Muted"},
+        ])
+        self.db.set_artist_ignored(66, True)
+        self.storage_patch()
+        client = self.make_client()
+
+        hidden = client.get("/browse").data.decode()
+        self.assertNotIn("Muted", hidden)
+        self.assertIn("显示已暂停", hidden)
+
+        shown = client.get("/browse?ignored=1").data.decode()
+        self.assertIn("Muted", shown)
+        self.assertIn("已暂停", shown)
+
+        token = self.csrf(client)
+        client.post("/browse/ignore/66", data={
+            "ignored": "0", "next": "/browse", "_csrf": token,
+        })
+        self.assertFalse(self.db.following()[1]["ignored"])
+        self.assertIn("Muted", client.get("/browse").data.decode())
+
+    def test_api_progress(self):
+        sched = Scheduler(None, self.db, self.rules)
+        sched._set_progress(index=1, total=2, artist="A", work="W")
+        with mock.patch.object(webui, "DownloadQueue", StubQueue):
+            app = webui.create_app(None, self.db, self.rules, sched)
+        app.jinja_env.undefined = StrictUndefined
+        data = app.test_client().get("/api/progress").get_json()
+        self.assertFalse(data["running"])
+        self.assertEqual(data["progress"]["artist"], "A")
+        self.assertEqual(data["progress"]["total"], 2)
+
+    def test_maintenance_cleanup(self):
+        self.storage_patch()
+        (self.root / "downloads" / "Artist" / "1_test.jpg").unlink()
+        client = self.make_client()
+        client.get("/rules")
+        token = self.csrf(client)
+        resp = client.post("/maintenance/cleanup", data={"_csrf": token},
+                           follow_redirects=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(self.db.get(1))
+        self.assertIn("清理完成", resp.data.decode())
+
+    def test_dashboard_progress_render(self):
+        sched = Scheduler(None, self.db, self.rules)
+        sched._running = True
+        sched._set_progress(index=1, total=2, artist="Artist", work="Test work")
+        with mock.patch.object(webui, "DownloadQueue", StubQueue):
+            app = webui.create_app(None, self.db, self.rules, sched)
+        app.jinja_env.undefined = StrictUndefined
+        html = app.test_client().get("/").data.decode()
+        self.assertIn("当前进度", html)
+        self.assertIn("正在处理 1/2 位画师：Artist", html)
+        self.assertIn("Test work", html)
 
     def test_api_status(self):
         client = self.make_client()

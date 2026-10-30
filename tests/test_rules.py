@@ -122,6 +122,29 @@ class RulesTest(unittest.TestCase):
         # 已经迁移过就不再覆盖
         self.assertFalse(self.rules.migrate_legacy_env())
 
+    def test_template_and_ugoira_rules(self):
+        errors = self.rules.update({
+            "ugoira_format": "gif",
+            "folder_template": "{artist}/{date}",
+            "filename_template": "{id}_{title}",
+        })
+        self.assertEqual(errors, {})
+        snap = self.rules.snapshot(refresh=True)
+        self.assertEqual(snap["ugoira_format"], "gif")
+        self.assertEqual(snap["folder_template"], "{artist}/{date}")
+
+        errors = self.rules.update({
+            "ugoira_format": "bogus",
+            "folder_template": "../escape",
+            "filename_template": "a/b",
+        })
+        self.assertIn("ugoira_format", errors)
+        self.assertIn("folder_template", errors)
+        self.assertIn("filename_template", errors)
+
+        errors = self.rules.update({"filename_template": "{unknown}"})
+        self.assertIn("filename_template", errors)
+
     def test_reset_watermarks(self):
         self.db.set_artist_watermark(1, "a", 100)
         self.db.set_artist_watermark(2, "b", 200)

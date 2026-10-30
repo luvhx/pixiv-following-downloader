@@ -7,13 +7,17 @@
 - 下载先全部落到临时目录再上传，上传失败会回滚已写入的文件，避免孤儿；
 - 请求节流参数由规则页控制。
 """
+import datetime
 import logging
 import os
 import random
 import re
+import shutil
+import subprocess
 import tempfile
 import threading
 import time
+import zipfile
 
 from pixivpy3 import AppPixivAPI
 
@@ -40,7 +44,8 @@ def is_authenticated(api: AppPixivAPI) -> bool:
 
 
 def create_api() -> AppPixivAPI:
-    api = AppPixivAPI()
+    # 避免网络卡住时请求无限挂起
+    api = AppPixivAPI(timeout=(5, 30))
     if config.HTTPS_PROXY:
         api.set_proxy(config.HTTPS_PROXY)
 
@@ -371,6 +376,202 @@ def collect_image_urls(illust: dict, kind: str = "original",
     return urls
 
 
+def _render_name(template: str, values: dict) -> str:
+    try:
+        return template.format_map(values)
+    except (KeyError, ValueError, IndexError):
+        return template
+
+
+def build_relative_path(illust: dict, page_index: int, page_count: int,
+                        ext: str, rules: dict = None) -> str:
+    """按规则里配置的目录/文件名模板生成相对路径。
+
+    默认保持旧命名：单页 `<画师>/<id>_<标题>.<ext>`，多页
+    `<画师>/<id>_p<页码>_<标题>.<ext>`（页码从 0 开始）。
+    """
+    rules = rules or {}
+    author = illust.get("user") or {}
+    artist = sanitize_filename(author.get("name") or author.get("id") or "unknown")
+    title = sanitize_filename(illust.get("title") or "untitled")
+    date = str(illust.get("create_date") or "")[:10] or datetime.date.today().isoformat()
+    ext = "." + str(ext or "jpg").lstrip(".")
+
+    values = {
+        "id": illust.get("id", ""),
+        "illust_id": illust.get("id", ""),
+        "title": title,
+        "artist": artist,
+        "artist_id": author.get("id") or "",
+        "page": page_index,
+        "pages": page_count,
+        "type": illust.get("type") or "illust",
+        "date": date,
+        "ext": ext.lstrip("."),
+    }
+
+    folder_template = (rules.get("folder_template") or "{artist}").strip()
+    name_template = (rules.get("filename_template") or "").strip()
+    if not name_template:
+        name_template = "{id}_{title}" if page_count <= 1 else "{id}_p{page}_{title}"
+    elif page_count > 1 and "{page}" not in name_template:
+        # 自定义模板没写页码时自动补上，避免多页互相覆盖
+        name_template += "_p{page}"
+
+    folder = _render_name(folder_template, values)
+    filename = _render_name(name_template, values)
+
+    parts = []
+    for part in folder.replace("\\", "/").split("/"):
+        part = part.strip()
+        if not part or part in (".", ".."):
+            continue
+        parts.append(sanitize_filename(part))
+    if not parts:
+        parts = [artist]
+
+    filename = sanitize_filename(filename) or title
+    if "{ext}" not in name_template and not filename.lower().endswith(ext.lower()):
+        filename += ext
+    return "/".join(parts + [filename])
+
+
+def _ffmpeg_path() -> str:
+    return shutil.which("ffmpeg") or ""
+
+
+def _extract_ugoira(zip_path: str, dest: str) -> list:
+    """只解压 basename，避免 zip 里的路径穿越。"""
+    names = []
+    with zipfile.ZipFile(zip_path) as archive:
+        for info in archive.infolist():
+            if info.is_dir():
+                continue
+            name = os.path.basename(info.filename)
+            if not name or name.startswith("."):
+                continue
+            with archive.open(info) as src, open(os.path.join(dest, name), "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            names.append(name)
+    return names
+
+
+def _convert_ugoira(frames: list, delays: list, out_path: str, fmt: str) -> bool:
+    ffmpeg = _ffmpeg_path()
+    if not ffmpeg:
+        logger.warning("未找到 ffmpeg，无法转换动图，将保存原始 zip")
+        return False
+
+    workdir = os.path.dirname(out_path)
+    list_path = os.path.join(workdir, "frames.txt")
+    lines = []
+    for name, delay in zip(frames, delays):
+        lines.append(f"file '{name}'")
+        lines.append(f"duration {max(0.02, float(delay)):.3f}")
+    if frames:
+        lines.append(f"file '{frames[-1]}'")
+    with open(list_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+    if fmt == "gif":
+        cmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+               "-vf", "fps=20,scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos",
+               "-loop", "0", out_path]
+    else:
+        cmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+               "-vsync", "vfr", "-c:v", "libvpx-vp9", "-pix_fmt", "yuv420p",
+               "-b:v", "0", "-crf", "32", "-an", out_path]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, timeout=300, cwd=workdir,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.warning(f"ffmpeg 执行失败: {e}")
+        return False
+    if result.returncode != 0:
+        logger.warning(
+            f"ffmpeg 转换失败: {result.stderr.decode('utf-8', 'ignore')[-300:]}"
+        )
+        return False
+    return os.path.exists(out_path)
+
+
+def _download_ugoira(api, illust: dict, db: DownloadDB, rules: dict) -> bool:
+    illust_id = illust["id"]
+    if db.is_downloaded(illust_id):
+        return True
+    try:
+        meta_resp = api_call(api, api.ugoira_metadata, illust_id) or {}
+        meta = meta_resp.get("ugoira_metadata") or {}
+        zip_urls = meta.get("zip_urls") or {}
+        zip_url = zip_urls.get("medium") or zip_urls.get("small")
+        if not zip_url:
+            logger.warning(f"动图 {illust_id} 没有 zip 地址，跳过")
+            return False
+        frames_meta = meta.get("frames") or []
+    except Exception as e:
+        logger.error(f"获取动图元数据失败 {illust_id}: {e}")
+        return False
+
+    storage = get_storage()
+    fmt = rules.get("ugoira_format", "webm")
+    if fmt not in ("webm", "gif", "zip"):
+        fmt = "webm"
+    author = illust.get("user") or {}
+    author_name = sanitize_filename(author.get("name") or author.get("id") or "unknown")
+    title = sanitize_filename(illust.get("title") or "untitled")
+
+    try:
+        with tempfile.TemporaryDirectory(prefix=f"pixiv_ugoira_{illust_id}_") as tmpdir:
+            zip_name = f"{illust_id}.zip"
+            api.download(zip_url, path=tmpdir, name=zip_name)
+            zip_path = os.path.join(tmpdir, zip_name)
+            if not os.path.exists(zip_path):
+                logger.warning(f"动图 zip 下载失败: {illust_id}")
+                return False
+
+            frames_dir = os.path.join(tmpdir, "frames")
+            os.makedirs(frames_dir, exist_ok=True)
+            extracted = _extract_ugoira(zip_path, frames_dir)
+            if not extracted:
+                logger.warning(f"动图 {illust_id} 解压后没有帧")
+                return False
+
+            by_name = {name: name for name in extracted}
+            frames, delays = [], []
+            for item in frames_meta:
+                name = os.path.basename(str(item.get("file") or ""))
+                if name in by_name:
+                    frames.append(name)
+                    delays.append(max(0.02, (item.get("delay") or 40) / 1000.0))
+            if not frames:
+                frames = sorted(extracted)
+                delays = [0.1] * len(frames)
+
+            out_ext = ".zip"
+            out_file = zip_path
+            if fmt in ("webm", "gif"):
+                out_ext = "." + fmt
+                out_file = os.path.join(tmpdir, "animation" + out_ext)
+                if not _convert_ugoira(frames, delays, out_file, fmt):
+                    out_ext, out_file = ".zip", zip_path
+
+            relative_path = build_relative_path(illust, 0, 1, out_ext, rules)
+            storage.save(out_file, relative_path)
+
+        db.mark_downloaded(
+            illust_id, title, author.get("id"), author_name,
+            illust_tag_names(illust), 1, files=[relative_path],
+            thumb_url=select_thumb_url(illust), illust_type="ugoira",
+            bookmarks=illust.get("total_bookmarks") or 0,
+        )
+        logger.info(f"✔ 已下载动图 [{author_name}] {title} (ID: {illust_id}, {out_ext})")
+        return True
+    except Exception as e:
+        logger.error(f"下载动图 {illust_id} 失败: {e}")
+        return False
+
+
 def _download_pages(api: AppPixivAPI, urls: list, title: str,
                     illust_id: int, tmpdir: str, delay: float) -> list:
     """把页面下载到临时目录，返回 [(page_index, filename)]；失败抛异常。"""
@@ -400,6 +601,9 @@ def download_illust(api: AppPixivAPI, illust: dict, db: DownloadDB,
         logger.debug(f"作品 {illust_id} 已下载，跳过")
         return True
 
+    if illust.get("type") == "ugoira":
+        return _download_ugoira(api, illust, db, rules)
+
     kind = rules.get("download_kind", "original")
     first_page_only = bool(rules.get("first_page_only", False))
     delay = config.DOWNLOAD_DELAY
@@ -424,8 +628,11 @@ def download_illust(api: AppPixivAPI, illust: dict, db: DownloadDB,
             # 2) 全部成功后按顺序上传；上传中途失败则回滚已写入的文件
             saved_paths = []
             try:
-                for _page_index, filename in files:
-                    relative_path = f"{author_name}/{filename}"
+                for page_index, filename in files:
+                    ext = os.path.splitext(filename)[1]
+                    relative_path = build_relative_path(
+                        illust, page_index, len(files), ext, rules,
+                    )
                     if storage.exists(relative_path):
                         saved_paths.append(relative_path)
                         continue

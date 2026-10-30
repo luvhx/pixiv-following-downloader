@@ -30,7 +30,9 @@ from werkzeug.exceptions import HTTPException
 import config
 import rules as rules_module
 from config import ConfigFile
-from gallery import delete_illust, image_mime, resolve_files, webdav_public_url
+from gallery import (
+    cleanup_missing, delete_illust, image_mime, resolve_files, webdav_public_url,
+)
 from pixiv import (
     api_call, apply_proxy, download_illust, get_following_users,
     illust_tag_names, is_authenticated, reauthenticate, select_thumb_url,
@@ -340,6 +342,13 @@ RULE_FIELDS = [
     ("first_page_only", "多页作品仅首页", "select",
      "开启后多页作品只保存第一页。",
      [("false", "false（全部页面）"), ("true", "true（仅首页）")]),
+    ("ugoira_format", "动图格式", "select",
+     "Pixiv 动图（ugoira）保存格式；zip 不转换，需要 ffmpeg 才能转 webm/gif。",
+     [("webm", "webm（推荐）"), ("gif", "gif"), ("zip", "zip（原始帧）")]),
+    ("folder_template", "目录模板", "text",
+     "留空 = 画师名。可用占位符：{artist} {artist_id} {date}；支持 / 分级。", None),
+    ("filename_template", "文件名模板", "text",
+     "留空 = {id}_{title}（多页自动加 _p{page}）。可用：{id} {title} {artist} {page} {pages} {date} {type} {ext}（扩展名不含点）", None),
     ("max_per_artist", "单画师每轮最大下载", "int",
      "每位画师每轮最多下载多少个作品；0 表示不限制。", None),
     ("min_bookmark_count", "最小收藏数", "int",
@@ -688,7 +697,7 @@ def create_app(api, db, rules, scheduler) -> Flask:
         status = scheduler.status() if scheduler else {
             "running": False, "paused": False, "mode": "未运行",
             "next_run": None, "last_run": None, "last_stats": None,
-            "target_user_id": config.TARGET_USER_ID,
+            "target_user_id": config.TARGET_USER_ID, "progress": {},
         }
         db_stats = db.stats() if db else {"downloaded": 0, "artists": 0}
         recent = db.list_downloaded(limit=6)["rows"] if db else []
@@ -824,17 +833,22 @@ def create_app(api, db, rules, scheduler) -> Flask:
     @app.get("/browse")
     def browse():
         preview = request.args.get("preview") in ("1", "true", "yes")
+        show_ignored = request.args.get("ignored") in ("1", "true", "yes")
         following = db.following() if db else []
+        ignored_count = sum(1 for a in following if a.get("ignored"))
+        visible = following if show_ignored else [
+            a for a in following if not a.get("ignored")
+        ]
         counts = {}
         if db:
             counts = {a["id"]: a["count"] for a in db.artist_options()}
         preview_ids = [
             work["illust_id"]
-            for artist in following for work in (artist.get("previews") or [])
+            for artist in visible for work in (artist.get("previews") or [])
         ]
         downloaded = db.downloaded_ids(preview_ids) if (db and preview) else set()
         artists = []
-        for artist in following:
+        for artist in visible:
             item = dict(artist)
             item["downloaded"] = counts.get(artist["artist_id"], 0)
             artists.append(item)
@@ -845,7 +859,9 @@ def create_app(api, db, rules, scheduler) -> Flask:
             auth_ok=_api_authed(api),
             preview=preview,
             downloaded=downloaded,
-            has_previews=any(a.get("previews") for a in following),
+            has_previews=any(a.get("previews") for a in visible),
+            show_ignored=show_ignored,
+            ignored_count=ignored_count,
         )
 
     @app.post("/browse/refresh")
@@ -903,6 +919,7 @@ def create_app(api, db, rules, scheduler) -> Flask:
                         "artist_id": artist_id,
                         "artist_name": works[0]["author_name"],
                         "avatar_url": None,
+                        "ignored": 0,
                     }
             except Exception as e:
                 logger.error(f"浏览画师 {artist_id} 作品失败: {e}")
@@ -916,7 +933,7 @@ def create_app(api, db, rules, scheduler) -> Flask:
         return render_template(
             "browse_artist.html", active="browse",
             artist=artist or {"artist_id": artist_id, "artist_name": str(artist_id),
-                              "avatar_url": None},
+                              "avatar_url": None, "ignored": 0},
             works=works, has_next=has_next, error=error,
             kind=kind, page=page, pending=pending,
             downloaded_count=downloaded_count,
@@ -936,6 +953,18 @@ def create_app(api, db, rules, scheduler) -> Flask:
             flash(f"已加入下载队列：作品 {illust_id}", "ok")
         else:
             flash(f"作品 {illust_id} 已在下载队列中", "warn")
+        return redirect(_safe_next(request.form.get("next"), url_for("browse")))
+
+    @app.post("/browse/ignore/<int:artist_id>")
+    def browse_ignore(artist_id):
+        if not db:
+            flash("数据库不可用", "error")
+            return redirect(_safe_next(request.form.get("next"), url_for("browse")))
+        ignored = request.form.get("ignored") == "1"
+        if db.set_artist_ignored(artist_id, ignored):
+            flash("已暂停该画师同步" if ignored else "已恢复该画师同步", "ok")
+        else:
+            flash("画师不在关注列表中", "warn")
         return redirect(_safe_next(request.form.get("next"), url_for("browse")))
 
     @app.post("/browse/download-batch")
@@ -1267,6 +1296,31 @@ def create_app(api, db, rules, scheduler) -> Flask:
             args["sort"] = sort
         return url_for("downloaded", **args)
 
+    @app.post("/maintenance/cleanup")
+    def maintenance_cleanup():
+        if not db:
+            flash("数据库不可用", "error")
+            return redirect(url_for("rules_page"))
+        try:
+            storage = get_storage()
+        except Exception as e:
+            flash(f"存储不可用: {e}", "error")
+            return redirect(url_for("rules_page"))
+        try:
+            result = cleanup_missing(db, storage)
+        except Exception as e:
+            logger.exception(f"清理失效记录失败: {e}")
+            flash(f"清理失败: {e}", "error")
+            return redirect(url_for("rules_page"))
+        message = (
+            f"清理完成：移除 {result['removed']} 条失效记录，"
+            f"修正 {result['trimmed']} 条部分缺失记录"
+        )
+        if result["errors"]:
+            message += f"，{result['errors']} 个文件检查失败（已保留）"
+        flash(message, "ok" if not result["errors"] else "warn")
+        return redirect(url_for("rules_page"))
+
     # ---------- 日志 ----------
     @app.route("/logs")
     def logs():
@@ -1328,6 +1382,17 @@ def create_app(api, db, rules, scheduler) -> Flask:
             db=db.stats() if db else {},
             authed=_api_authed(api),
             log=MEMORY_LOG.lines(200),
+        )
+
+    @app.get("/api/progress")
+    def api_progress():
+        status = scheduler.status() if scheduler else {}
+        return jsonify(
+            running=bool(status.get("running")),
+            paused=bool(status.get("paused")),
+            progress=status.get("progress") or {},
+            next_run=status.get("next_run"),
+            last_run=status.get("last_run"),
         )
 
     @app.get("/api/logs")

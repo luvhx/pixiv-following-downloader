@@ -296,7 +296,8 @@ class WebDAVStorage:
             current = f"{current}/{quote(part, safe='')}"
             self._mkcol(current)
 
-    def exists(self, relative_path: str, attempts: int = _RETRY_ATTEMPTS) -> bool:
+    def exists(self, relative_path: str, attempts: int = _RETRY_ATTEMPTS,
+               strict: bool = False) -> bool:
         url = self._url_for(relative_path)
         try:
             resp = self._request(
@@ -310,6 +311,8 @@ class WebDAVStorage:
                 )
         except requests.RequestException as e:
             logger.warning(f"WebDAV HEAD {url} 异常: {e}")
+            if strict:
+                raise RuntimeError(f"WebDAV 检查失败 {url}: {e}") from e
             return False
         if resp.status_code in (200, 207):
             return True

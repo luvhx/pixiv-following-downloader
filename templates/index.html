@@ -75,6 +75,18 @@
   </div>
 </div>
 
+{% set p = status.progress or {} %}
+{% set pct = ((((p.get('index') or 0) / (p.get('total') or 1)) * 100)|round(0)) if p.get('total') else 0 %}
+<div class="panel" id="progress-panel" {% if not status.running %}hidden{% endif %}>
+  <h2>当前进度</h2>
+  <p class="small" id="progress-text" style="margin:0 0 6px">
+    {% if p.get('artist') %}
+    正在处理 {{ p.get('index') }}/{{ p.get('total') }} 位画师：{{ p.get('artist') }}{% if p.get('work') %} · {{ p.get('work') }}{% endif %}
+    {% else %}准备中…{% endif %}
+  </p>
+  <div class="progress"><div id="progress-fill" style="width: {{ pct }}%"></div></div>
+</div>
+
 {% set s = status.last_stats %}
 {% if s %}
 <div class="panel">
@@ -90,6 +102,7 @@
     <div class="card"><div class="label">收藏数不足</div><div class="value">{{ s.skipped_bookmark }}</div></div>
     <div class="card"><div class="label">已存在</div><div class="value">{{ s.skipped_existing }}</div></div>
     <div class="card"><div class="label">超出上限</div><div class="value">{{ s.skipped_limit }}</div></div>
+    <div class="card"><div class="label">已暂停画师</div><div class="value">{{ s.skipped_ignored }}</div></div>
   </div>
   {% if s.retry_later %}
   <p class="small muted" style="margin:0">有 {{ s.retry_later }} 个作品下载失败，下一轮会自动重试。</p>
@@ -157,4 +170,36 @@
   <pre class="log" style="max-height:280px">{{ log_text or '暂无日志' }}</pre>
   <p class="small" style="margin:8px 0 0"><a href="{{ url_for('logs') }}">查看完整日志 →</a></p>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var panel = document.getElementById("progress-panel");
+  var text = document.getElementById("progress-text");
+  var fill = document.getElementById("progress-fill");
+  if (!panel || !text || !fill) return;
+  function render(data) {
+    if (!data.running) { panel.hidden = true; return; }
+    panel.hidden = false;
+    var p = data.progress || {};
+    var pct = p.total ? Math.min(100, Math.round((p.index || 0) / p.total * 100)) : 0;
+    fill.style.width = pct + "%";
+    if (p.artist) {
+      var msg = "正在处理 " + (p.index || 0) + "/" + (p.total || 0) + " 位画师：" + p.artist;
+      if (p.work) msg += " · " + p.work;
+      text.textContent = msg;
+    } else {
+      text.textContent = "准备中…";
+    }
+  }
+  function tick() {
+    fetch("{{ url_for('api_progress') }}", { headers: { "Accept": "application/json" } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d) render(d); })
+      .catch(function () {});
+  }
+  tick();
+  setInterval(tick, 3000);
+})();
+</script>
 {% endblock %}

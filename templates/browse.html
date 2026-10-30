@@ -7,9 +7,15 @@
   <div class="btn-row">
     <input type="search" id="artistFilter" placeholder="筛选画师名" style="width:180px">
     <a class="btn {{ 'primary' if preview }}"
-       href="{{ url_for('browse', preview=1) if not preview else url_for('browse') }}">
+       href="{{ url_for('browse', preview=None if preview else 1, ignored=1 if show_ignored else None) }}">
       {{ '关闭代表作预览' if preview else '预览代表作' }}
     </a>
+    {% if ignored_count %}
+    <a class="btn"
+       href="{{ url_for('browse', ignored=None if show_ignored else 1, preview=1 if preview else None) }}">
+      {{ '隐藏已暂停' if show_ignored else '显示已暂停（%d）'|format(ignored_count) }}
+    </a>
+    {% endif %}
     <form method="post" action="{{ url_for('browse_refresh') }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
       <button class="btn primary" type="submit" {% if not auth_ok %}disabled{% endif %}>刷新关注列表</button>
@@ -36,7 +42,7 @@
 {% if artists %}
 <div class="artists {{ 'with-preview' if preview }}" id="artistGrid">
   {% for a in artists %}
-  <div class="artist" data-name="{{ (a.artist_name or '')|lower }}">
+  <div class="artist {{ 'ignored' if a.ignored }}" data-name="{{ (a.artist_name or '')|lower }}">
     <a class="artist-main" href="{{ url_for('browse_artist', artist_id=a.artist_id) }}">
       {% if a.avatar_url %}
       <img src="{{ url_for('thumb_proxy', u=a.avatar_url) }}" alt="" loading="lazy"
@@ -45,7 +51,7 @@
       <span class="avatar"></span>
       {% endif %}
       <span class="info">
-        <span class="name">{{ a.artist_name or a.artist_id }}</span>
+        <span class="name">{{ a.artist_name or a.artist_id }}{% if a.ignored %} <span class="badge-off">已暂停</span>{% endif %}</span>
         <span class="sub">ID {{ a.artist_id }} · 已下载 {{ a.downloaded }} · 查看全部作品 →</span>
       </span>
     </a>
@@ -77,8 +83,13 @@
 </div>
 {% else %}
 <div class="panel empty">
+  {% if ignored_count and not show_ignored %}
+  <div class="big">所有画师都已暂停同步</div>
+  <p class="small"><a href="{{ url_for('browse', ignored=1) }}">显示已暂停的画师</a>，或在画师页恢复同步。</p>
+  {% else %}
   <div class="big">还没有关注列表缓存</div>
   <p class="small">点击右上角「刷新关注列表」从 Pixiv 拉取，之后每次自动运行也会同步更新。</p>
+  {% endif %}
 </div>
 {% endif %}
 {% endblock %}

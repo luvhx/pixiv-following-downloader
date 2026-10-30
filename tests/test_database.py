@@ -162,6 +162,14 @@ class DownloadDBTest(unittest.TestCase):
         names = [r["artist_name"] for r in self.db.following()]
         self.assertEqual(names, ["B2"])
 
+    def test_ignored_artists_survive_refresh(self):
+        self.db.replace_following([{"user_id": 1, "user_name": "A"}])
+        self.assertTrue(self.db.set_artist_ignored(1, True))
+        self.assertEqual(self.db.ignored_artist_ids(), {1})
+        # 刷新关注列表不会清掉暂停标记
+        self.db.replace_following([{"user_id": 1, "user_name": "A2"}])
+        self.assertEqual(self.db.following()[0]["ignored"], 1)
+
     def test_settings(self):
         self.assertEqual(self.db.get_settings(), {})
         self.db.set_settings({"download_kind": "large"})
@@ -247,8 +255,10 @@ class FollowingMigrationTest(unittest.TestCase):
         db = DownloadDB(path)
         try:
             self.assertEqual(db.following()[0]["previews"], [])
+            self.assertEqual(db.following()[0]["ignored"], 0)
             cols = [r[1] for r in db._conn().execute("PRAGMA table_info(following)")]
             self.assertIn("previews", cols)
+            self.assertIn("ignored", cols)
         finally:
             db.close()
             tmp.cleanup()

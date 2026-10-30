@@ -143,5 +143,18 @@
   </form>
 </div>
 
+
+<div class="panel">
+  <h2>维护</h2>
+  <p class="small muted">
+    扫描数据库里的文件路径：文件全部丢失的作品会删除记录；部分丢失的会修正文件列表。
+    使用 WebDAV 时每张图都要发一次 HEAD，作品多时会比较慢。
+  </p>
+  <form method="post" action="{{ url_for('maintenance_cleanup') }}"
+        onsubmit="return confirm('扫描并清理失效记录？该操作只删除文件已不存在的记录。');">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <button class="btn" type="submit">扫描并清理失效记录</button>
+  </form>
+</div>
 {% endblock %}
 

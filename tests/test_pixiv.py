@@ -297,6 +297,105 @@ class IncrementalFetchTest(unittest.TestCase):
         self.assertTrue(complete)
 
 
+class NamingTest(unittest.TestCase):
+    def _illust(self):
+        return {
+            "id": 12, "title": "Title", "type": "illust",
+            "user": {"id": 34, "name": "Artist"},
+            "create_date": "2024-01-02T03:04:05+09:00",
+        }
+
+    def test_default_paths(self):
+        illust = self._illust()
+        self.assertEqual(
+            pixiv.build_relative_path(illust, 0, 1, ".jpg", {}),
+            "Artist/12_Title.jpg",
+        )
+        self.assertEqual(
+            pixiv.build_relative_path(illust, 1, 3, ".jpg", {}),
+            "Artist/12_p1_Title.jpg",
+        )
+
+    def test_custom_templates(self):
+        illust = self._illust()
+        rules = {
+            "folder_template": "{date}/{artist_id}",
+            "filename_template": "{id}-{title}-{page}",
+        }
+        self.assertEqual(
+            pixiv.build_relative_path(illust, 1, 3, ".png", rules),
+            "2024-01-02/34/12-Title-1.png",
+        )
+        rules = {"filename_template": "{id}.{ext}"}
+        self.assertEqual(
+            pixiv.build_relative_path(illust, 0, 1, ".jpg", rules),
+            "Artist/12.jpg",
+        )
+
+    def test_custom_template_without_page_gets_suffix(self):
+        illust = self._illust()
+        rules = {"filename_template": "{title}"}
+        self.assertEqual(
+            pixiv.build_relative_path(illust, 2, 3, ".jpg", rules),
+            "Artist/Title_p2.jpg",
+        )
+
+
+class UgoiraTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = DownloadDB(os.path.join(self.tmp.name, "t.db"))
+
+    def tearDown(self):
+        self.db.close()
+        self.tmp.cleanup()
+
+    def test_ugoira_zip_fallback(self):
+        import io
+        import zipfile
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("000000.jpg", b"frame0")
+            archive.writestr("000001.jpg", b"frame1")
+
+        class Api:
+            access_token = "x"
+            zip_bytes = buffer.getvalue()
+
+            def ugoira_metadata(self, illust_id):
+                return {"ugoira_metadata": {
+                    "zip_urls": {"medium": "https://i.pximg.net/x.zip"},
+                    "frames": [
+                        {"file": "000000.jpg", "delay": 40},
+                        {"file": "000001.jpg", "delay": 60},
+                    ],
+                }}
+
+            def download(self, url, path, name):
+                with open(os.path.join(path, name), "wb") as f:
+                    f.write(self.zip_bytes)
+
+        storage = FakeStorage()
+        illust = {
+            "id": 77, "title": "Anim", "type": "ugoira", "page_count": 1,
+            "user": {"id": 5, "name": "Artist"},
+            "tags": [{"name": "动图"}],
+            "image_urls": {"medium": "https://i.pximg.net/thumb.jpg"},
+            "total_bookmarks": 12,
+        }
+        with mock.patch.object(pixiv, "get_storage", return_value=storage):
+            ok = pixiv.download_illust(
+                Api(), illust, self.db, {"ugoira_format": "zip"},
+            )
+        self.assertTrue(ok)
+        row = self.db.get(77)
+        self.assertEqual(row["illust_type"], "ugoira")
+        self.assertEqual(row["bookmarks"], 12)
+        self.assertIn(".zip", row["files"])
+        self.assertEqual(len(storage.saved), 1)
+
+
 class DownloadTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

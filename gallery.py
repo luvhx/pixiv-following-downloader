@@ -10,6 +10,7 @@ import os
 from urllib.parse import quote
 
 import config
+from storage import WebDAVStorage
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,47 @@ def image_mime(filename: str) -> str:
         "png": "image/png",
         "gif": "image/gif",
         "webp": "image/webp",
+        "webm": "video/webm",
+        "mp4": "video/mp4",
+        "mov": "video/quicktime",
     }.get(ext, "application/octet-stream")
+
+
+def cleanup_missing(db, storage) -> dict:
+    """扫描数据库里的文件路径，删除全部缺失的记录、修正部分缺失的记录。"""
+    removed = trimmed = missing = errors = 0
+    for illust_id, files in db.all_files():
+        if not files:
+            continue
+        existing = []
+        for path in files:
+            try:
+                if isinstance(storage, WebDAVStorage):
+                    # 严格模式：网络错误时保留记录，避免误删
+                    exists = storage.exists(path, strict=True)
+                else:
+                    exists = storage.exists(path)
+                if exists:
+                    existing.append(path)
+                else:
+                    missing += 1
+            except Exception as e:
+                logger.warning(f"检查文件失败 {path}: {e}")
+                errors += 1
+                existing.append(path)  # 检查失败时保留，避免误删记录
+        if not existing:
+            db.delete(illust_id)
+            removed += 1
+        elif len(existing) != len(files):
+            db.set_files(illust_id, existing)
+            trimmed += 1
+    logger.info(
+        f"清理失效记录：移除 {removed}，修正 {trimmed}，缺失文件 {missing}，错误 {errors}"
+    )
+    return {
+        "removed": removed, "trimmed": trimmed,
+        "missing": missing, "errors": errors,
+    }
 
 
 def delete_illust(db, storage, row: dict) -> dict:

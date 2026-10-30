@@ -172,6 +172,7 @@ class DownloadDB:
                 artist_name TEXT NOT NULL DEFAULT '',
                 avatar_url  TEXT,
                 previews    TEXT NOT NULL DEFAULT '[]',
+                ignored     INTEGER NOT NULL DEFAULT 0,
                 updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -260,6 +261,11 @@ class DownloadDB:
             logger.info("数据库迁移：following 增加 previews 列")
             conn.execute(
                 "ALTER TABLE following ADD COLUMN previews TEXT NOT NULL DEFAULT '[]'"
+            )
+        if cols and "ignored" not in cols:
+            logger.info("数据库迁移：following 增加 ignored 列")
+            conn.execute(
+                "ALTER TABLE following ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0"
             )
 
     # ---------- 已下载 ----------
@@ -745,7 +751,7 @@ class DownloadDB:
 
     def following(self) -> list:
         rows = self._conn().execute(
-            "SELECT artist_id, artist_name, avatar_url, previews, updated_at "
+            "SELECT artist_id, artist_name, avatar_url, previews, ignored, updated_at "
             "FROM following ORDER BY artist_name COLLATE NOCASE"
         ).fetchall()
         result = []
@@ -757,6 +763,20 @@ class DownloadDB:
                 item["previews"] = []
             result.append(item)
         return result
+
+    def set_artist_ignored(self, artist_id: int, ignored: bool) -> bool:
+        with self._write() as conn:
+            cur = conn.execute(
+                "UPDATE following SET ignored = ? WHERE artist_id = ?",
+                (1 if ignored else 0, int(artist_id)),
+            )
+            return cur.rowcount > 0
+
+    def ignored_artist_ids(self) -> set:
+        rows = self._conn().execute(
+            "SELECT artist_id FROM following WHERE ignored = 1"
+        ).fetchall()
+        return {r["artist_id"] for r in rows}
 
     def following_updated_at(self):
         row = self._conn().execute(

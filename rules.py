@@ -9,6 +9,7 @@
 """
 import logging
 import os
+import re
 import threading
 
 from croniter import croniter
@@ -25,6 +26,9 @@ DEFAULTS = {
     "run_cron": "",
     "run_cron_immediate": True,
     "poll_interval": 0,
+    "ugoira_format": "webm",
+    "folder_template": "",
+    "filename_template": "",
 }
 
 _BOOL_KEYS = {"first_page_only", "run_cron_immediate"}
@@ -33,8 +37,17 @@ _FLOAT_KEYS = set()
 _ENUM_KEYS = {
     "download_kind": {"original", "large", "medium"},
     "illust_type": {"illust", "manga", "all"},
+    "ugoira_format": {"webm", "gif", "zip"},
 }
 TAG_MODES = ("include", "exclude")
+
+# 文件/目录模板支持的占位符
+TEMPLATE_KEYS = {
+    "id", "illust_id", "title", "artist", "artist_id",
+    "page", "pages", "type", "date", "ext",
+}
+_TEXT_KEYS = {"folder_template", "filename_template"}
+_PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
 
 # 表单里的取值范围（闭区间）
 _LIMITS = {
@@ -42,6 +55,23 @@ _LIMITS = {
     "max_per_artist": (0, 100_000),
     "poll_interval": (0, 2_592_000),
 }
+
+
+def _template_error(key: str, value: str) -> str:
+    if len(value) > 200:
+        return "最多 200 个字符"
+    unknown = {m for m in _PLACEHOLDER_RE.findall(value)} - TEMPLATE_KEYS
+    if unknown:
+        return "不支持的占位符：" + ", ".join(sorted(unknown))
+    if key == "folder_template":
+        if value.startswith("/") or "\\" in value:
+            return "目录模板不能以 / 开头，也不能包含反斜杠"
+        if ".." in value.split("/"):
+            return "目录模板不能包含 .."
+    else:
+        if "/" in value or "\\" in value or ".." in value:
+            return "文件名模板不能包含路径分隔符或 .."
+    return ""
 
 
 def _as_bool(raw) -> bool:
@@ -52,7 +82,7 @@ def _as_bool(raw) -> bool:
 
 def coerce(key: str, raw):
     """把任意输入转成该规则的合法值；非法输入回落到默认值。"""
-    if key == "run_cron":
+    if key in ("run_cron", "folder_template", "filename_template"):
         return str(raw or "").strip()
     if key in _BOOL_KEYS:
         return _as_bool(raw)
@@ -124,6 +154,14 @@ class Rules:
                 value = str(values.get(key, default) or "").strip()
                 if value and not croniter.is_valid(value):
                     errors[key] = "cron 表达式无效（应为 5 段：分 时 日 月 周）"
+                    continue
+                clean[key] = value
+                continue
+            if key in _TEXT_KEYS:
+                value = str(values.get(key, default) or "").strip()
+                error = _template_error(key, value)
+                if error:
+                    errors[key] = error
                     continue
                 clean[key] = value
                 continue

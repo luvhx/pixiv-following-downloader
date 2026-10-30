@@ -22,14 +22,22 @@ logger = logging.getLogger(__name__)
 _EMPTY_STATS = {
     "artists": 0, "artists_empty": 0, "scanned": 0,
     "skipped_exclude": 0, "skipped_include": 0, "skipped_bookmark": 0,
-    "skipped_existing": 0, "skipped_limit": 0,
+    "skipped_existing": 0, "skipped_limit": 0, "skipped_ignored": 0,
     "downloaded": 0, "failed": 0, "retry_later": 0,
 }
 
 
 def run_once(api, db, target_user_id: str, rules: dict,
-             should_stop=None) -> dict:
+             should_stop=None, progress=None) -> dict:
     """执行一轮抓取与下载，返回统计。"""
+
+    def report(**fields):
+        if progress:
+            try:
+                progress(**fields)
+            except Exception:
+                pass
+
     if not target_user_id:
         logger.error("未配置 TARGET_USER_ID，跳过本轮（可在配置页设置）")
         return None
@@ -53,6 +61,8 @@ def run_once(api, db, target_user_id: str, rules: dict,
     stats["artists"] = len(following)
     illust_type = rules.get("illust_type", "illust")
     max_per_artist = int(rules.get("max_per_artist", 0) or 0)
+    ignored_ids = db.ignored_artist_ids() if db else set()
+    report(index=0, total=len(following))
 
     for idx, artist in enumerate(following, 1):
         if should_stop and should_stop():
@@ -70,6 +80,11 @@ def run_once(api, db, target_user_id: str, rules: dict,
 
         artist_id = artist["user_id"]
         artist_name = artist["user_name"]
+        report(index=idx, total=len(following), artist=artist_name, work=None)
+        if artist_id in ignored_ids:
+            stats["skipped_ignored"] += 1
+            logger.info(f"  ↷ 已暂停同步，跳过画师: {artist_name}")
+            continue
         watermark = db.artist_watermark(artist_id)
         logger.info(
             f"[{idx}/{len(following)}] 处理画师: {artist_name} "
@@ -101,6 +116,10 @@ def run_once(api, db, target_user_id: str, rules: dict,
                 return stats
 
             stats["scanned"] += 1
+            report(
+                index=idx, total=len(following), artist=artist_name,
+                work=illust.get("title") or str(illust["id"]),
+            )
 
             if should_exclude(illust, rules.get("exclude_tags")):
                 stats["skipped_exclude"] += 1
@@ -162,6 +181,7 @@ def run_once(api, db, target_user_id: str, rules: dict,
         f"扫描 {stats['scanned']} | 排除 tag {stats['skipped_exclude']} | "
         f"不匹配 tag {stats['skipped_include']} | 收藏数不足 {stats['skipped_bookmark']} | "
         f"已存在 {stats['skipped_existing']} | 超出上限 {stats['skipped_limit']} | "
+        f"已暂停 {stats['skipped_ignored']} | "
         f"成功下载 {stats['downloaded']} | 失败 {stats['failed']}"
     )
     return stats
@@ -194,8 +214,22 @@ class Scheduler(threading.Thread):
         self._last_run = None
         self._last_stats = None
         self._next_run = None
+        self._progress = {}
+        self._progress_lock = threading.Lock()
 
     # ---------- 状态 ----------
+    def _set_progress(self, **fields):
+        with self._progress_lock:
+            self._progress.update(fields)
+
+    def _clear_progress(self):
+        with self._progress_lock:
+            self._progress = {}
+
+    def progress(self) -> dict:
+        with self._progress_lock:
+            return dict(self._progress)
+
     def status(self) -> dict:
         return {
             "running": self._running,
@@ -205,6 +239,7 @@ class Scheduler(threading.Thread):
             "last_run": self._fmt(self._last_run),
             "last_stats": self._last_stats,
             "target_user_id": self._target_override or config.TARGET_USER_ID,
+            "progress": self.progress(),
         }
 
     def _current_mode(self) -> str:
@@ -327,7 +362,9 @@ class Scheduler(threading.Thread):
             rules = self.rules.snapshot(refresh=True)
             target = self._target_override or config.TARGET_USER_ID
             self._last_stats = run_once(
-                self.api, self.db, target, rules, should_stop=lambda: self._paused
+                self.api, self.db, target, rules,
+                should_stop=lambda: self._paused,
+                progress=self._set_progress,
             )
         except Exception as e:
             logger.exception(f"运行异常: {e}")
@@ -335,6 +372,7 @@ class Scheduler(threading.Thread):
         finally:
             self._running = False
             self._last_run = datetime.now()
+            self._clear_progress()
 
 
 def _ensure_authenticated(api) -> bool:

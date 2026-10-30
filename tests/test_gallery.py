@@ -3,6 +3,7 @@ import sys
 import tempfile
 import types
 import unittest
+from pathlib import Path
 
 _dotenv = types.ModuleType("dotenv")
 _dotenv.load_dotenv = lambda *args, **kwargs: None
@@ -10,6 +11,7 @@ sys.modules.setdefault("dotenv", _dotenv)
 
 import gallery  # noqa: E402
 from database import DownloadDB  # noqa: E402
+from storage import LocalStorage  # noqa: E402
 
 
 class FakeStorage:
@@ -89,6 +91,24 @@ class GalleryTest(unittest.TestCase):
         self.assertTrue(result["removed"])
         self.assertEqual(result["missing"], 2)
         self.assertIsNone(self.db.get(1))
+
+    def test_cleanup_missing(self):
+        root = Path(self.tmp.name) / "downloads"
+        (root / "Artist").mkdir(parents=True)
+        (root / "Artist" / "1_a.jpg").write_bytes(b"a")
+        self.db.mark_downloaded(
+            1, "one", 10, "Artist", [], 1,
+            files=["Artist/1_a.jpg", "Artist/1_b.jpg"],
+        )
+        self.db.mark_downloaded(
+            2, "two", 10, "Artist", [], 1, files=["Artist/2_a.jpg"],
+        )
+        result = gallery.cleanup_missing(self.db, LocalStorage(str(root)))
+        self.assertEqual(result["removed"], 1)
+        self.assertEqual(result["trimmed"], 1)
+        self.assertEqual(result["missing"], 2)
+        self.assertIsNone(self.db.get(2))
+        self.assertEqual(self.db.get(1)["files"], '["Artist/1_a.jpg"]')
 
     def test_image_mime(self):
         self.assertEqual(gallery.image_mime("a.JPG"), "image/jpeg")

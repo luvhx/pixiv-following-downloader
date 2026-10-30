@@ -6,9 +6,17 @@
 <div class="detail">
   <div class="preview">
     {% if files %}
+    {% set current_ext = files[page - 1].rsplit('.', 1)[-1]|lower %}
+    {% if current_ext == 'zip' %}
+    <div class="empty">动图已保存为 zip（原始帧），点击下方「原图」下载</div>
+    {% elif current_ext in ('webm', 'mp4', 'mov') %}
+    <video src="{{ url_for('work_image', illust_id=row.illust_id, p=page) }}"
+           controls autoplay loop muted playsinline></video>
+    {% else %}
     <a href="{{ url_for('work_image', illust_id=row.illust_id, p=page) }}" target="_blank" rel="noopener">
       <img src="{{ url_for('work_image', illust_id=row.illust_id, p=page) }}" alt="{{ row.title }}">
     </a>
+    {% endif %}
     {% else %}
     <div class="empty">图片文件缺失</div>
     {% endif %}

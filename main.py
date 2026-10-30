@@ -28,7 +28,7 @@ def main():
     except Exception as e:
         logger.error(f"初始认证失败: {e}")
         logger.warning("以未认证状态启动，请在 WebUI 配置页修正 refresh_token")
-        api = AppPixivAPI()
+        api = AppPixivAPI(timeout=(5, 30))
         if config.HTTPS_PROXY:
             api.set_proxy(config.HTTPS_PROXY)
 
