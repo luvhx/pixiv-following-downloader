@@ -105,7 +105,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 .brand { display: flex; align-items: center; gap: 8px; color: var(--text); font-weight: 700; font-size: 15px; white-space: nowrap; }
 .brand:hover { text-decoration: none; }
 .brand img { width: 24px; height: 24px; }
-.brand span { max-width: 210px; overflow: hidden; text-overflow: ellipsis; }
+.topbar .brand span { max-width: 210px; overflow: hidden; text-overflow: ellipsis; }
 .topbar nav { display: flex; gap: 4px; flex: 1; overflow-x: auto; scrollbar-width: none; }
 .topbar nav::-webkit-scrollbar { display: none; }
 .topbar nav a {
@@ -424,7 +424,7 @@ pre.log {
 @media (max-width: 760px) {
   .topbar { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
   .topbar nav { order: 3; width: 100%; flex: none; }
-  .brand span { display: none; }
+  .topbar .brand span { display: none; }
   body { background-attachment: scroll; }
   .wrap { padding: 14px 12px 40px; }
   .works { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -433,6 +433,9 @@ pre.log {
   .detail .info { position: static; }
   .tag-manager { grid-template-columns: 1fr; }
   .artists, .artists.with-preview { grid-template-columns: 1fr; }
+  .auth-wrap .brand, .setup-wrap .brand {
+    white-space: normal; flex-wrap: wrap; justify-content: center; text-align: center;
+  }
   .filterbar input[type=text], .filterbar input[type=search] { width: 100%; }
   .filterbar .grow { flex: 1 1 100%; }
 }
