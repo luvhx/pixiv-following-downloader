@@ -1,3 +1,5 @@
+import io
+import json
 import sys
 import tempfile
 import types
@@ -33,11 +35,13 @@ class StubQueue:
 
 class FakeAPI:
     access_token = "token"
+    user_id = 123
 
     def __init__(self):
         self.following_calls = 0
+        self.user_illusts_calls = 0
 
-    def user_following(self, user_id, **kwargs):
+    def user_following(self, user_id, restrict="public", **kwargs):
         self.following_calls += 1
         return {
             "user_previews": [{
@@ -55,6 +59,7 @@ class FakeAPI:
         }
 
     def user_illusts(self, user_id, type="illust", offset=None, **kwargs):
+        self.user_illusts_calls += 1
         return {
             "illusts": [{
                 "id": 1001, "title": "新作品", "page_count": 2,
@@ -73,6 +78,12 @@ class FakeAPI:
     def illust_detail(self, illust_id):
         return {"illust": None}
 
+    def user_detail(self, artist_id, **kwargs):
+        return {"user": {
+            "id": artist_id, "name": f"Artist {artist_id}",
+            "profile_image_urls": {"medium": "https://i.pximg.net/u.jpg"},
+        }}
+
     @staticmethod
     def parse_qs(url):
         return None
@@ -80,7 +91,7 @@ class FakeAPI:
 
 class WebUITest(unittest.TestCase):
     _KEYS = (
-        "PIXIV_REFRESH_TOKEN", "TARGET_USER_ID", "STORAGE_BACKEND",
+        "PIXIV_REFRESH_TOKEN", "PIXIV_DOWNLOAD_REFRESH_TOKEN", "STORAGE_BACKEND",
         "DOWNLOAD_PATH", "DB_PATH", "WEBDAV_URL", "WEBDAV_ROOT",
         "WEBDAV_PUBLIC_URL", "IMAGE_DELIVERY", "WEBUI_USERNAME", "WEBUI_PASSWORD",
         "REQUEST_DELAY", "REQUEST_JITTER", "DOWNLOAD_DELAY", "MAX_RETRIES",
@@ -92,7 +103,7 @@ class WebUITest(unittest.TestCase):
         self._orig = {k: getattr(config, k) for k in self._KEYS}
 
         config.PIXIV_REFRESH_TOKEN = "test-token"
-        config.TARGET_USER_ID = "123"
+        config.PIXIV_DOWNLOAD_REFRESH_TOKEN = ""
         config.STORAGE_BACKEND = "local"
         config.DOWNLOAD_PATH = str(self.root / "downloads")
         config.DB_PATH = str(self.root / "test.db")
@@ -525,7 +536,7 @@ class WebUITest(unittest.TestCase):
         resp = client.post("/browse/refresh", data={"_csrf": token})
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(len(self.db.following()), 1)
-        self.assertEqual(api.following_calls, 1)
+        self.assertEqual(api.following_calls, 2)  # 公开 + 隐藏
 
         page = client.get("/browse/55")
         self.assertEqual(page.status_code, 200)
@@ -557,7 +568,7 @@ class WebUITest(unittest.TestCase):
         on = client.get("/browse?preview=1").data.decode()
         self.assertIn("预览作品", on)
         self.assertNotIn("每个画师展示", on)
-        self.assertIn("关闭代表作预览", on)
+        self.assertIn("关闭预览", on)
         self.assertIn("https://i.pximg.net/p1.jpg", on)
 
     def test_browse_artist_tag_actions(self):
@@ -608,7 +619,7 @@ class WebUITest(unittest.TestCase):
         self.assertIn("Muted", client.get("/browse").data.decode())
 
     def test_api_progress(self):
-        sched = Scheduler(None, self.db, self.rules)
+        sched = Scheduler(None, None, self.db, self.rules)
         sched._set_progress(index=1, total=2, artist="A", work="W")
         with mock.patch.object(webui, "DownloadQueue", StubQueue):
             app = webui.create_app(None, self.db, self.rules, sched)
@@ -634,13 +645,13 @@ class WebUITest(unittest.TestCase):
         html = self.make_client().get("/").data.decode()
         self.assertIn("<title>概览 · Pixiv Following Downloader</title>", html)
         self.assertIn(">概览<", html)
-        self.assertIn(">关注画师<", html)
+        self.assertIn(">画师<", html)
         self.assertIn(">本地画廊<", html)
         self.assertIn(">下载规则<", html)
         self.assertIn('class="nav-sep"', html)
 
     def test_dashboard_progress_render(self):
-        sched = Scheduler(None, self.db, self.rules)
+        sched = Scheduler(None, None, self.db, self.rules)
         sched._running = True
         sched._set_progress(index=1, total=2, artist="Artist", work="Test work")
         with mock.patch.object(webui, "DownloadQueue", StubQueue):
@@ -650,6 +661,106 @@ class WebUITest(unittest.TestCase):
         self.assertIn("当前进度", html)
         self.assertIn("正在处理 1/2 位画师：Artist", html)
         self.assertIn("Test work", html)
+
+    def test_config_and_setup_have_no_target(self):
+        self.storage_patch()
+        client = self.make_client()
+        cfg = client.get("/config").data.decode()
+        self.assertNotIn('name="TARGET_USER_ID"', cfg)
+        self.assertIn('name="PIXIV_DOWNLOAD_REFRESH_TOKEN"', cfg)
+
+        config.PIXIV_REFRESH_TOKEN = ""
+        setup = client.get("/setup").data.decode()
+        self.assertNotIn('name="TARGET_USER_ID"', setup)
+        self.assertIn('name="PIXIV_DOWNLOAD_REFRESH_TOKEN"', setup)
+
+    def test_plan_toggle(self):
+        self.db.replace_following([
+            {"user_id": 55, "user_name": "Artist"},
+            {"user_id": 66, "user_name": "Other"},
+        ])
+        self.storage_patch()
+        client = self.make_client()
+        client.get("/browse")
+        token = self.csrf(client)
+
+        client.post("/plan/toggle/55", data={
+            "action": "add", "next": "/browse", "_csrf": token,
+        })
+        self.assertEqual(self.db.plan_ids(), {55})
+        plan = client.get("/browse?view=plan").data.decode()
+        self.assertIn("Artist", plan)
+        self.assertIn("移出计划", plan)
+
+        client.post("/plan/toggle/55", data={
+            "action": "remove", "next": "/browse?view=plan", "_csrf": token,
+        })
+        self.assertEqual(self.db.plan_ids(), set())
+
+    def test_plan_add_non_followed(self):
+        api = FakeAPI()
+        with mock.patch.object(webui, "DownloadQueue", return_value=StubQueue()):
+            app = webui.create_app(api, self.db, self.rules, None)
+        app.jinja_env.undefined = StrictUndefined
+        client = app.test_client()
+        client.get("/browse?view=plan")
+        token = self.csrf(client)
+        resp = client.post("/plan/add", data={
+            "artist": "https://www.pixiv.net/users/999", "_csrf": token,
+        }, follow_redirects=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.db.plan_ids(), {999})
+        self.assertIn("Artist 999", resp.data.decode())
+
+    def test_privacy_filter(self):
+        self.db.replace_following([
+            {"user_id": 55, "user_name": "PublicArtist", "is_private": 0},
+            {"user_id": 66, "user_name": "PrivateArtist", "is_private": 1},
+        ])
+        self.storage_patch()
+        client = self.make_client()
+        public = client.get("/browse?privacy=public").data.decode()
+        self.assertIn("PublicArtist", public)
+        self.assertNotIn("PrivateArtist", public)
+        private = client.get("/browse?privacy=private").data.decode()
+        self.assertIn("PrivateArtist", private)
+        self.assertNotIn("PublicArtist", private)
+
+    def test_download_account_used_for_works(self):
+        main = FakeAPI()
+        download = FakeAPI()
+        with mock.patch.object(webui, "DownloadQueue", return_value=StubQueue()):
+            app = webui.create_app(
+                main, self.db, self.rules, None, download_api=download,
+            )
+        app.jinja_env.undefined = StrictUndefined
+        html = app.test_client().get("/browse/55").data.decode()
+        self.assertIn("新作品", html)
+        self.assertEqual(download.user_illusts_calls, 1)
+        self.assertEqual(main.user_illusts_calls, 0)
+
+    def test_tag_export_import(self):
+        self.storage_patch()
+        self.rules.add_tag("风景", "include")
+        self.rules.add_tag("R-18", "exclude")
+        client = self.make_client()
+        exported = client.get("/rules/tags/export")
+        self.assertEqual(exported.status_code, 200)
+        data = json.loads(exported.data)
+        self.assertEqual(data["include"], ["风景"])
+        self.assertEqual(data["exclude"], ["R-18"])
+
+        client.get("/rules")
+        token = self.csrf(client)
+        payload = json.dumps({"include": ["人物"], "exclude": ["R-18"]}).encode()
+        resp = client.post("/rules/tags/import", data={
+            "file": (io.BytesIO(payload), "tags.json"),
+            "mode": "replace",
+            "_csrf": token,
+        }, content_type="multipart/form-data", follow_redirects=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual([t["tag"] for t in self.rules.tags("include")], ["人物"])
+        self.assertEqual([t["tag"] for t in self.rules.tags("exclude")], ["R-18"])
 
     def test_api_status(self):
         client = self.make_client()

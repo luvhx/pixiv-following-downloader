@@ -36,7 +36,9 @@
   --ok-bg: #e8f6ee;
   --warn-bg: #fdf3e2;
   --err-bg: #fdecec;
-  --shadow: 0 1px 2px rgba(16, 24, 40, .05);
+  --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 24px rgba(16, 24, 40, .04);
+  --shadow-lg: 0 2px 4px rgba(16, 24, 40, .05), 0 18px 44px rgba(16, 24, 40, .08);
+  --sheen: rgba(255, 255, 255, .55);
   --radius: 12px;
   color-scheme: light;
 }
@@ -55,13 +57,21 @@
   --ok-bg: #12291d;
   --warn-bg: #2c2415;
   --err-bg: #2d1717;
-  --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 10px 28px rgba(0, 0, 0, .22);
+  --shadow-lg: 0 2px 6px rgba(0, 0, 0, .4), 0 22px 52px rgba(0, 0, 0, .35);
+  --sheen: rgba(255, 255, 255, .035);
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
-  background: var(--bg);
+  background:
+    radial-gradient(1100px 560px at 6% -12%,
+      color-mix(in srgb, var(--accent) 10%, transparent), transparent 62%),
+    radial-gradient(900px 520px at 100% -4%,
+      color-mix(in srgb, var(--accent) 7%, transparent), transparent 58%),
+    var(--bg);
+  background-attachment: fixed;
   color: var(--text);
   font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
         "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
@@ -81,7 +91,9 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; gap: 18px;
   padding: 10px 20px;
-  background: var(--panel);
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  backdrop-filter: blur(14px) saturate(1.15);
   border-bottom: 1px solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: 8px; color: var(--text); font-weight: 700; font-size: 15px; white-space: nowrap; }
@@ -95,7 +107,10 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
   font-size: 14px; white-space: nowrap;
 }
 .topbar nav a:hover { background: var(--panel-2); color: var(--text); text-decoration: none; }
-.topbar nav a.active { background: var(--panel-2); color: var(--text); font-weight: 600; }
+.topbar nav a.active {
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--accent); font-weight: 600;
+}
 .nav-sep { flex: none; width: 1px; height: 18px; margin: 0 4px; background: var(--border); align-self: center; }
 .topbar-actions { display: flex; align-items: center; gap: 6px; }
 
@@ -108,13 +123,19 @@ footer { color: var(--muted); font-size: 12px; text-align: center; padding: 0 20
 
 /* 卡片 / 面板 */
 .panel {
-  background: var(--panel); border: 1px solid var(--border);
+  background-color: var(--panel);
+  background-image: linear-gradient(180deg, var(--sheen), transparent 72%);
+  border: 1px solid var(--border);
   border-radius: var(--radius); padding: 16px; margin-bottom: 16px;
+  box-shadow: var(--shadow);
 }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 10px; margin-bottom: 16px; }
 .card {
-  background: var(--panel); border: 1px solid var(--border);
+  background-color: var(--panel);
+  background-image: linear-gradient(180deg, var(--sheen), transparent 75%);
+  border: 1px solid var(--border);
   border-radius: var(--radius); padding: 12px 14px;
+  box-shadow: var(--shadow);
 }
 .card .label { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
 .card .value { font-size: 17px; font-weight: 600; word-break: break-all; }
@@ -128,8 +149,15 @@ footer { color: var(--muted); font-size: 12px; text-align: center; padding: 0 20
   font: inherit; font-size: 14px; cursor: pointer; white-space: nowrap;
 }
 .btn:hover { background: var(--panel-2); text-decoration: none; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-.btn.primary:hover { filter: brightness(1.06); }
+.btn.primary {
+  background-image: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 82%, white), var(--accent));
+  border-color: color-mix(in srgb, var(--accent) 82%, black);
+  color: var(--accent-text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28),
+              0 4px 14px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.btn.primary:hover { filter: brightness(1.05); }
 .btn.danger { color: var(--err); }
 .btn.danger:hover { background: var(--err-bg); }
 .btn.mini { min-height: 28px; padding: 3px 9px; font-size: 12.5px; border-radius: 8px; }
@@ -206,10 +234,13 @@ a.chip:hover { color: var(--text); text-decoration: none; border-color: var(--ac
 /* 作品网格 */
 .works { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
 .work {
-  position: relative; background: var(--panel);
+  position: relative; background-color: var(--panel);
+  background-image: linear-gradient(180deg, var(--sheen), transparent 55%);
   border: 1px solid var(--border); border-radius: var(--radius);
   overflow: hidden; box-shadow: var(--shadow);
+  transition: box-shadow .2s ease, border-color .2s ease;
 }
+.work:hover { box-shadow: var(--shadow-lg); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
 .work .thumb { position: relative; display: block; aspect-ratio: 3 / 4; background: var(--panel-2); overflow: hidden; }
 .work .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .work .thumb .placeholder {
@@ -270,9 +301,14 @@ a.chip:hover { color: var(--text); text-decoration: none; border-color: var(--ac
 .artists.with-preview { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 .artist {
   display: block;
-  background: var(--panel); border: 1px solid var(--border);
+  background-color: var(--panel);
+  background-image: linear-gradient(180deg, var(--sheen), transparent 60%);
+  border: 1px solid var(--border);
   border-radius: var(--radius); padding: 10px; color: var(--text);
+  box-shadow: var(--shadow);
+  transition: box-shadow .2s ease, border-color .2s ease;
 }
+.artist:hover { box-shadow: var(--shadow-lg); }
 .artist:hover { border-color: var(--accent); }
 .artist.ignored { opacity: .6; }
 .badge-off {
@@ -289,6 +325,8 @@ a.chip:hover { color: var(--text); text-decoration: none; border-color: var(--ac
 .artist .info { min-width: 0; }
 .artist .name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .artist .sub { color: var(--muted); font-size: 12px; }
+.artist-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.artist-actions form { margin: 0; }
 .artist-previews { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
 .mini-work {
   position: relative; display: flex; flex-direction: column;
@@ -356,13 +394,19 @@ pre.log {
 /* 登录 / 首次配置 */
 .auth-wrap { max-width: 380px; margin: 7vh auto; }
 .auth-wrap .brand { justify-content: center; margin-bottom: 14px; font-size: 16px; }
-.auth-box { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
+.auth-box {
+  background-color: var(--panel);
+  background-image: linear-gradient(180deg, var(--sheen), transparent 60%);
+  border: 1px solid var(--border); border-radius: 14px; padding: 22px;
+  box-shadow: var(--shadow-lg);
+}
 .setup-wrap { max-width: 680px; margin: 0 auto; }
 
 @media (max-width: 760px) {
   .topbar { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
   .topbar nav { order: 3; width: 100%; flex: none; }
   .brand span { display: none; }
+  body { background-attachment: scroll; }
   .wrap { padding: 14px 12px 40px; }
   .works { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .work .body { padding: 7px 8px 8px; }
@@ -388,7 +432,7 @@ pre.log {
   <nav>
     <a href="{{ url_for('index') }}" class="{{ 'active' if active == 'index' }}">概览</a>
     <span class="nav-sep" aria-hidden="true"></span>
-    <a href="{{ url_for('browse') }}" class="{{ 'active' if active == 'browse' }}">关注画师</a>
+    <a href="{{ url_for('browse') }}" class="{{ 'active' if active == 'browse' }}">画师</a>
     <a href="{{ url_for('downloaded') }}" class="{{ 'active' if active == 'downloaded' }}">本地画廊</a>
     <span class="nav-sep" aria-hidden="true"></span>
     <a href="{{ url_for('rules_page') }}" class="{{ 'active' if active == 'rules' }}">下载规则</a>

@@ -5,7 +5,7 @@ import sys
 from pixivpy3 import AppPixivAPI
 
 import config
-from pixiv import create_api, start_token_refresher
+from pixiv import ApiProxy, create_api, start_token_refresher
 from database import DownloadDB
 from rules import Rules
 from scheduler import Scheduler
@@ -32,22 +32,34 @@ def main():
         if config.HTTPS_PROXY:
             api.set_proxy(config.HTTPS_PROXY)
 
-    start_token_refresher(api)
+    download_api = ApiProxy(api)
+    if config.PIXIV_DOWNLOAD_REFRESH_TOKEN and (
+        config.PIXIV_DOWNLOAD_REFRESH_TOKEN != config.PIXIV_REFRESH_TOKEN
+    ):
+        try:
+            download_api.set_api(create_api(config.PIXIV_DOWNLOAD_REFRESH_TOKEN))
+            logger.info("下载专用 Pixiv 账号认证成功")
+        except Exception as e:
+            logger.error(f"下载专用账号认证失败，回退到主账号: {e}")
+            download_api.set_api(api)
+
+    start_token_refresher(api, lambda: config.PIXIV_REFRESH_TOKEN)
+    start_token_refresher(
+        download_api, lambda: config.PIXIV_DOWNLOAD_REFRESH_TOKEN,
+        name="download-token-refresher",
+    )
+
     db = DownloadDB(config.DB_PATH)
     rules = Rules(db)
     rules.migrate_legacy_env()
 
-    target_override = sys.argv[1] if len(sys.argv) > 1 else None
-    if not target_override and not config.TARGET_USER_ID:
-        logger.warning("未配置 TARGET_USER_ID，调度将跳过运行，请在 WebUI 配置页设置")
-
     install_log_capture()
 
-    scheduler = Scheduler(api, db, rules, target_override)
+    scheduler = Scheduler(api, download_api, db, rules)
     scheduler.start()
 
     logger.info(f"WebUI 监听 http://{config.WEBUI_HOST}:{config.WEBUI_PORT}")
-    app = create_app(api, db, rules, scheduler)
+    app = create_app(api, db, rules, scheduler, download_api=download_api)
     try:
         _serve(app)
     except KeyboardInterrupt:

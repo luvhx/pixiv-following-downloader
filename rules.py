@@ -14,6 +14,8 @@ import threading
 
 from croniter import croniter
 
+from database import normalize_tag
+
 logger = logging.getLogger(__name__)
 
 # 默认值；类型由 _INT_KEYS / _FLOAT_KEYS / _ENUM_KEYS / _BOOL_KEYS 决定
@@ -234,6 +236,46 @@ class Rules:
         removed = self.db.remove_tag_rule(tag)
         self.invalidate()
         return removed
+
+    def export_tags(self) -> dict:
+        rules = self.tags()
+        return {
+            "version": 1,
+            "include": [r["tag"] for r in rules if r["mode"] == "include"],
+            "exclude": [r["tag"] for r in rules if r["mode"] == "exclude"],
+        }
+
+    def import_tags(self, data: dict, replace: bool = False) -> dict:
+        """导入 tag 规则；返回 {added, invalid, replaced}。"""
+        if not isinstance(data, dict):
+            raise ValueError("JSON 顶层必须是对象")
+        pairs = []
+        for mode in ("include", "exclude"):
+            values = data.get(mode) or []
+            if not isinstance(values, list):
+                raise ValueError(f"{mode} 必须是数组")
+            for value in values:
+                tag = str(value).strip()
+                if not tag or len(tag) > 100:
+                    continue
+                pairs.append((tag, mode))
+        if len(pairs) > 2000:
+            raise ValueError("一次最多导入 2000 个 tag")
+        if replace:
+            self.db.clear_tag_rules()
+        added = 0
+        seen = set()
+        for tag, mode in pairs:
+            key = (normalize_tag(tag), mode)
+            if key in seen:
+                continue
+            seen.add(key)
+            if self.db.set_tag_rule(tag, mode):
+                added += 1
+        self.invalidate()
+        logger.info(f"导入 tag 规则：{added} 个（{'替换' if replace else '合并'}）")
+        return {"added": added, "invalid": len(pairs) - len(seen),
+                "replaced": bool(replace)}
 
     def reset_watermarks(self) -> int:
         count = self.db.reset_watermarks()

@@ -2,39 +2,67 @@
 {% block title %}首次配置 · Pixiv Following Downloader{% endblock %}
 {% block content %}
 <div class="setup-wrap">
+  <div class="brand" style="justify-content:center;margin:18px 0 10px">
+    <img src="{{ url_for('static', filename='logo.svg') }}" alt="" width="34" height="34">
+    <span>Pixiv Following Downloader</span>
+  </div>
   <div class="page-head">
     <h1>首次配置</h1>
   </div>
   <p class="small muted">
-    填写下面几项即可启动。其余选项之后可以在「配置」和「下载规则」页调整。
+    两步就能开始：连接 Pixiv 账号，选择作品存储位置。完成后会进入「抓取计划」，
+    由你决定要下载哪些画师。
   </p>
 
   <form method="post" action="{{ url_for('setup') }}" class="panel">
     <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-    <div class="form-grid">
-      {% for f in fields %}
-      <div class="field {{ 'span-2' if f.key in ('PIXIV_REFRESH_TOKEN', 'WEBDAV_URL') }}">
-        <label class="name" for="{{ f.key }}">{{ f.label }}{% if f.required %} *{% endif %}</label>
-        {% if f.kind == "select" %}
-        <select id="{{ f.key }}" name="{{ f.key }}" class="{{ 'invalid' if f.error }}">
-          {% for value, label in f.options %}
-          <option value="{{ value }}" {{ 'selected' if f.value|string == value }}>{{ label }}</option>
-          {% endfor %}
-        </select>
-        {% elif f.kind == "password" %}
-        <input id="{{ f.key }}" name="{{ f.key }}" type="password" value="{{ f.value }}"
-               autocomplete="off" class="{{ 'invalid' if f.error }}">
-        {% else %}
-        <input id="{{ f.key }}" name="{{ f.key }}" type="text" value="{{ f.value }}"
-               class="{{ 'invalid' if f.error }}">
-        {% endif %}
-        {% if f.help %}<div class="help">{{ f.help }}</div>{% endif %}
-        {% if f.error %}<div class="error">{{ f.error }}</div>{% endif %}
+
+    <fieldset>
+      <legend>1. 连接 Pixiv</legend>
+      <div class="form-grid">
+        {% for f in fields if f.key in ('PIXIV_REFRESH_TOKEN', 'PIXIV_DOWNLOAD_REFRESH_TOKEN') %}
+        <div class="field {{ 'span-2' if f.key == 'PIXIV_REFRESH_TOKEN' }}">
+          <label class="name" for="{{ f.key }}">{{ f.label }}{% if f.required %} *{% endif %}</label>
+          <input id="{{ f.key }}" name="{{ f.key }}" type="password" value="{{ f.value }}"
+                 autocomplete="off" class="{{ 'invalid' if f.error }}">
+          {% if f.help %}<div class="help">{{ f.help }}</div>{% endif %}
+          {% if f.error %}<div class="error">{{ f.error }}</div>{% endif %}
+        </div>
+        {% endfor %}
       </div>
-      {% endfor %}
-    </div>
+      <p class="small muted" style="margin:0">
+        主账号用于读取关注列表（公开 + 隐藏）；下载账号可选，用于抓取作品和下载。
+      </p>
+    </fieldset>
+
+    <fieldset>
+      <legend>2. 选择存储</legend>
+      <div class="form-grid">
+        {% for f in fields if f.key not in ('PIXIV_REFRESH_TOKEN', 'PIXIV_DOWNLOAD_REFRESH_TOKEN') %}
+        <div class="field {{ 'span-2' if f.key == 'WEBDAV_URL' }}">
+          <label class="name" for="{{ f.key }}">{{ f.label }}{% if f.required %} *{% endif %}</label>
+          {% if f.kind == "select" %}
+          <select id="{{ f.key }}" name="{{ f.key }}" class="{{ 'invalid' if f.error }}">
+            {% for value, label in f.options %}
+            <option value="{{ value }}" {{ 'selected' if f.value|string == value }}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          {% elif f.kind == "password" %}
+          <input id="{{ f.key }}" name="{{ f.key }}" type="password" value="{{ f.value }}"
+                 autocomplete="off" class="{{ 'invalid' if f.error }}">
+          {% else %}
+          <input id="{{ f.key }}" name="{{ f.key }}" type="text" value="{{ f.value }}"
+                 class="{{ 'invalid' if f.error }}">
+          {% endif %}
+          {% if f.help %}<div class="help">{{ f.help }}</div>{% endif %}
+          {% if f.error %}<div class="error">{{ f.error }}</div>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </fieldset>
+
     <div class="form-actions">
-      <button class="btn primary" type="submit">保存并开始</button>
+      <button class="btn primary" type="submit">保存并进入画师选择</button>
     </div>
   </form>
 </div>

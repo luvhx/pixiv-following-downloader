@@ -63,7 +63,7 @@ class ConfigFileTest(unittest.TestCase):
             "# 注释保留\n"
             "PIXIV_REFRESH_TOKEN=abc\n"
             "WEBUI_PORT=8080  # 端口\n"
-            "TARGET_USER_ID=42\n",
+            "CUSTOM_KEY=42\n",
             encoding="utf-8",
         )
 
@@ -88,7 +88,7 @@ class ConfigFileTest(unittest.TestCase):
 
     def test_unknown_keys_kept(self):
         cfg = ConfigFile(self.path)
-        self.assertEqual(cfg.get_all()["TARGET_USER_ID"], "42")
+        self.assertEqual(cfg.get_all()["CUSTOM_KEY"], "42")
 
 
 if __name__ == "__main__":

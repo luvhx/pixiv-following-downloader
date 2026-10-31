@@ -38,21 +38,47 @@ MAX_FOLLOWING_PAGES = 100
 MAX_ILLUST_PAGES = 60
 
 
+# ---------- 账号代理 ----------
+class ApiProxy:
+    """可在运行时切换底层 API（例如配置下载专用账号后无需重启）。"""
+
+    def __init__(self, api=None):
+        self._api = api
+
+    def set_api(self, api):
+        self._api = api
+
+    def get_api(self):
+        return self._api
+
+    def __getattr__(self, name):
+        api = self._api
+        if api is None:
+            raise AttributeError(name)
+        return getattr(api, name)
+
+    def __bool__(self):
+        return self._api is not None
+
+
 # ---------- 认证 ----------
 def is_authenticated(api: AppPixivAPI) -> bool:
     return bool(getattr(api, "access_token", None))
 
 
-def create_api() -> AppPixivAPI:
+def create_api(refresh_token: str = None) -> AppPixivAPI:
+    token = (refresh_token if refresh_token is not None
+             else config.PIXIV_REFRESH_TOKEN).strip()
     # 避免网络卡住时请求无限挂起
     api = AppPixivAPI(timeout=(5, 30))
+    api._refresh_token = token
     if config.HTTPS_PROXY:
         api.set_proxy(config.HTTPS_PROXY)
 
     last_err = None
     for attempt in range(1, 4):
         try:
-            api.auth(refresh_token=config.PIXIV_REFRESH_TOKEN)
+            api.auth(refresh_token=token)
             logger.info("Pixiv API 认证成功")
             return api
         except Exception as e:
@@ -65,11 +91,13 @@ def create_api() -> AppPixivAPI:
     raise last_err
 
 
-def reauthenticate(api: AppPixivAPI):
+def reauthenticate(api: AppPixivAPI, refresh_token: str = None):
+    token = (refresh_token or getattr(api, "_refresh_token", None)
+             or config.PIXIV_REFRESH_TOKEN)
     with _auth_lock:
         try:
             logger.warning("access_token 已失效，正在重新认证...")
-            api.auth(refresh_token=config.PIXIV_REFRESH_TOKEN)
+            api.auth(refresh_token=token)
             logger.info("access_token 刷新成功")
         except Exception as e:
             logger.error(f"重新认证失败，refresh_token 可能已失效: {e}")
@@ -82,7 +110,10 @@ def apply_proxy(api: AppPixivAPI):
         logger.info(f"已更新代理: {config.HTTPS_PROXY}")
 
 
-def start_token_refresher(api: AppPixivAPI):
+def start_token_refresher(api: AppPixivAPI, token_getter=None,
+                         name: str = "token-refresher"):
+    getter = token_getter or (lambda: config.PIXIV_REFRESH_TOKEN)
+
     def _loop():
         last_interval = max(1, config.TOKEN_REFRESH_INTERVAL)
         next_at = time.time() + last_interval * 60
@@ -94,18 +125,20 @@ def start_token_refresher(api: AppPixivAPI):
                 next_at = now + interval * 60
                 logger.info(f"Token 刷新间隔已更新为 {interval} 分钟")
             if now >= next_at:
-                try:
-                    logger.info(f"后台定时刷新 access_token（间隔 {interval} 分钟）...")
-                    with _auth_lock:
-                        api.auth(refresh_token=config.PIXIV_REFRESH_TOKEN)
-                    logger.info("后台刷新成功")
-                except Exception as e:
-                    logger.error(f"后台刷新失败: {e}")
+                token = (getter() or "").strip()
+                if token:
+                    try:
+                        logger.info(f"后台定时刷新 access_token（{name}）...")
+                        with _auth_lock:
+                            api.auth(refresh_token=token)
+                        logger.info(f"后台刷新成功（{name}）")
+                    except Exception as e:
+                        logger.error(f"后台刷新失败（{name}）: {e}")
                 next_at = time.time() + interval * 60
             time.sleep(min(30, max(1, next_at - time.time())))
 
-    threading.Thread(target=_loop, daemon=True, name="token-refresher").start()
-    logger.info("已启动后台 token 刷新线程")
+    threading.Thread(target=_loop, daemon=True, name=name).start()
+    logger.info(f"已启动后台 token 刷新线程（{name}）")
 
 
 # ---------- 请求 / 抓取 ----------
@@ -165,13 +198,22 @@ def api_call(api: AppPixivAPI, func, *args, delay=None, jitter=None,
     raise RuntimeError("请求失败：已达最大重试次数")
 
 
-def get_following_users(api: AppPixivAPI, user_id: str) -> list:
-    """返回 [{user_id, user_name, avatar_url}]。"""
+def get_following_users(api: AppPixivAPI, user_id: str = None,
+                        restrict: str = "public") -> list:
+    """返回 [{user_id, user_name, avatar_url, is_private, previews}]。"""
+    if not user_id:
+        user_id = getattr(api, "user_id", None)
+    if not user_id:
+        raise RuntimeError("未获取到当前 Pixiv 账号 ID，请先完成认证")
     users = []
-    next_qs = {"user_id": user_id}
+    next_qs = {"user_id": user_id, "restrict": restrict}
     pages = 0
     while next_qs and pages < MAX_FOLLOWING_PAGES:
-        resp = api_call(api, api.user_following, **next_qs) or {}
+        resp = api_call(
+            api, api.user_following,
+            delay=min(1.0, config.REQUEST_DELAY),
+            jitter=config.REQUEST_JITTER, **next_qs,
+        ) or {}
         if resp.get("error"):
             # 不要用半截列表覆盖本地缓存
             raise RuntimeError(f"获取关注列表失败: {resp['error']}")
@@ -197,13 +239,39 @@ def get_following_users(api: AppPixivAPI, user_id: str) -> list:
                 "user_id": user["id"],
                 "user_name": user.get("name") or str(user["id"]),
                 "avatar_url": (user.get("profile_image_urls") or {}).get("medium"),
+                "is_private": 1 if restrict == "private" else 0,
                 "previews": previews[:3],
             })
         next_qs = api.parse_qs(resp.get("next_url"))
+        if next_qs:
+            next_qs.setdefault("user_id", user_id)
+            next_qs["restrict"] = restrict
         pages += 1
     if next_qs:
         logger.warning(f"关注列表超过 {MAX_FOLLOWING_PAGES} 页，只取前 {len(users)} 位画师")
-    logger.info(f"共获取到 {len(users)} 位关注画师")
+    logger.info(f"共获取到 {len(users)} 位{'隐藏' if restrict == 'private' else '公开'}关注画师")
+    return users
+
+
+def sync_following(api: AppPixivAPI, db) -> list:
+    """同步当前登录账号的公开 + 隐藏关注，写入本地缓存。"""
+    public = get_following_users(api, restrict="public")
+    private = []
+    try:
+        private = get_following_users(api, restrict="private")
+    except Exception as e:
+        logger.warning(f"获取隐藏关注列表失败（可能账号不支持或网络错误）: {e}")
+
+    merged = {u["user_id"]: dict(u) for u in public}
+    for user in private:
+        item = merged.get(user["user_id"], dict(user))
+        item["is_private"] = 1
+        merged[user["user_id"]] = item
+    users = list(merged.values())
+    db.replace_following(users)
+    logger.info(
+        f"关注列表已同步：公开 {len(public)} 位，隐藏 {len(private)} 位"
+    )
     return users
 
 
@@ -232,6 +300,9 @@ def _fetch_user_illusts_by_type(api: AppPixivAPI, artist_id: int, illust_type: s
             break
         illusts.extend(page_items)
         next_qs = api.parse_qs(resp.get("next_url"))
+        if next_qs:
+            next_qs.setdefault("user_id", artist_id)
+            next_qs.setdefault("type", illust_type)
         pages += 1
         if pages >= MAX_ILLUST_PAGES:
             logger.warning(f"  ⚠ 画师 {artist_id} 作品超过 {MAX_ILLUST_PAGES} 页，本轮提前停止")

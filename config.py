@@ -14,7 +14,7 @@ ENV_FILE = Path(__file__).resolve().parent / ".env"
 _DEFAULTS = {
     # Pixiv
     "PIXIV_REFRESH_TOKEN": "",
-    "TARGET_USER_ID": "",
+    "PIXIV_DOWNLOAD_REFRESH_TOKEN": "",
     "TOKEN_REFRESH_INTERVAL": "50",
     # 存储
     "STORAGE_BACKEND": "local",

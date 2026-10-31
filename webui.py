@@ -10,7 +10,9 @@
 - /logs        内存日志
 """
 import hmac
+import json
 import logging
+import re
 import os
 import queue
 import secrets
@@ -34,8 +36,9 @@ from gallery import (
     cleanup_missing, delete_illust, image_mime, resolve_files, webdav_public_url,
 )
 from pixiv import (
-    api_call, apply_proxy, download_illust, get_following_users,
+    ApiProxy, api_call, apply_proxy, create_api, download_illust,
     illust_tag_names, is_authenticated, reauthenticate, select_thumb_url,
+    sync_following,
 )
 from storage import LocalStorage, WebDAVStorage, get_storage
 
@@ -257,8 +260,8 @@ def install_log_capture():
 CONFIG_FIELDS = [
     ("PIXIV_REFRESH_TOKEN", "Refresh Token", "password", "Pixiv 账号",
      "必填。修改保存后会立即使用新 token 重新认证。", None),
-    ("TARGET_USER_ID", "目标用户 ID", "text", "Pixiv 账号",
-     "抓取其关注列表的 Pixiv 用户 ID（纯数字）。", None),
+    ("PIXIV_DOWNLOAD_REFRESH_TOKEN", "下载专用 Refresh Token", "password", "Pixiv 账号",
+     "可选。填写后抓取作品/下载图片使用该账号，留空则复用主账号。", None),
     ("TOKEN_REFRESH_INTERVAL", "Token 刷新间隔（分钟）", "int", "Pixiv 账号",
      "后台刷新 access_token 的间隔，1-59。", None),
 
@@ -315,9 +318,9 @@ RESTART_REQUIRED = {"DB_PATH", "WEBUI_HOST", "WEBUI_PORT"}
 
 SETUP_FIELDS = [
     ("PIXIV_REFRESH_TOKEN", "Refresh Token", "password",
-     "必填 · Pixiv refresh_token", None),
-    ("TARGET_USER_ID", "目标用户 ID", "text",
-     "必填 · 抓取其关注列表的用户 ID", None),
+     "必填 · 用于读取你的关注列表（公开 + 隐藏）", None),
+    ("PIXIV_DOWNLOAD_REFRESH_TOKEN", "下载专用 Refresh Token", "password",
+     "可选 · 抓取作品和下载图片使用的账号；留空复用主账号", None),
     ("STORAGE_BACKEND", "存储后端", "select",
      "local=本地磁盘 / webdav=WebDAV",
      [("local", "local（本地磁盘）"), ("webdav", "webdav（WebDAV）")]),
@@ -424,8 +427,6 @@ def _parse_config_form(form) -> tuple:
 
     if not values["PIXIV_REFRESH_TOKEN"]:
         errors["PIXIV_REFRESH_TOKEN"] = "Pixiv refresh_token 不能为空"
-    if values["TARGET_USER_ID"] and not values["TARGET_USER_ID"].isdigit():
-        errors["TARGET_USER_ID"] = "目标用户 ID 应为纯数字"
     if values["STORAGE_BACKEND"] == "webdav" and not values["WEBDAV_URL"]:
         errors["WEBDAV_URL"] = "存储后端为 webdav 时必须填写 WebDAV 地址"
     if "WEBUI_PORT" not in errors and not (1 <= int(values["WEBUI_PORT"]) <= 65535):
@@ -442,24 +443,50 @@ def _parse_config_form(form) -> tuple:
 
 
 def _setup_complete() -> bool:
-    if not config.PIXIV_REFRESH_TOKEN or not config.TARGET_USER_ID:
+    if not config.PIXIV_REFRESH_TOKEN:
         return False
     if config.STORAGE_BACKEND == "webdav" and not config.WEBDAV_URL:
         return False
     return True
 
 
-def _apply_runtime_changes(api, old_token: str, old_proxy: str):
+def _apply_runtime_changes(api, download_api, old_token: str,
+                           old_download_token: str, old_proxy: str):
     if api is None:
         return
     if config.PIXIV_REFRESH_TOKEN and config.PIXIV_REFRESH_TOKEN != old_token:
         try:
-            reauthenticate(api)
+            api._refresh_token = config.PIXIV_REFRESH_TOKEN
+            reauthenticate(api, config.PIXIV_REFRESH_TOKEN)
             flash("已使用新 refresh_token 重新认证成功", "ok")
         except Exception as e:
             flash(f"配置已保存，但使用新 refresh_token 认证失败: {e}", "error")
+
+    if download_api is not None and (
+        config.PIXIV_DOWNLOAD_REFRESH_TOKEN != old_download_token
+    ):
+        token = (config.PIXIV_DOWNLOAD_REFRESH_TOKEN or "").strip()
+        if not token:
+            download_api.set_api(api)
+            flash("下载账号已清空，改为使用主账号", "ok")
+        else:
+            try:
+                new_api = create_api(token)
+                download_api.set_api(new_api)
+                flash("下载专用账号已更新", "ok")
+            except Exception as e:
+                flash(f"下载专用账号认证失败，仍使用原账号: {e}", "error")
+
     if config.HTTPS_PROXY != old_proxy:
         apply_proxy(api)
+        if download_api is not None and download_api.get_api() is not api:
+            apply_proxy(download_api.get_api())
+
+
+def _create_download_proxy(api, download_api=None):
+    if isinstance(download_api, ApiProxy):
+        return download_api
+    return ApiProxy(download_api or api)
 
 
 # ---------- 登录限速 ----------
@@ -516,7 +543,7 @@ def _card(illust: dict, downloaded: set) -> dict:
 
 
 # ---------- Flask 应用 ----------
-def create_app(api, db, rules, scheduler) -> Flask:
+def create_app(api, db, rules, scheduler, download_api=None) -> Flask:
     app = Flask(__name__)
     app.secret_key = _load_secret_key()
     app.config.update(
@@ -524,7 +551,8 @@ def create_app(api, db, rules, scheduler) -> Flask:
         SESSION_COOKIE_SAMESITE="Lax",
         SEND_FILE_MAX_AGE_DEFAULT=86400,
     )
-    download_queue = DownloadQueue(api, db, rules) if (api and db) else None
+    download_api = _create_download_proxy(api, download_api)
+    download_queue = DownloadQueue(download_api, db, rules) if (api and db) else None
 
     @app.context_processor
     def _inject_auth_flag():
@@ -582,10 +610,6 @@ def create_app(api, db, rules, scheduler) -> Flask:
                     errors[key] = f"{label} 取值无效"
             if not values.get("PIXIV_REFRESH_TOKEN"):
                 errors["PIXIV_REFRESH_TOKEN"] = "请填写 Pixiv refresh_token"
-            if not values.get("TARGET_USER_ID"):
-                errors["TARGET_USER_ID"] = "请填写目标用户 ID"
-            elif not values["TARGET_USER_ID"].isdigit():
-                errors["TARGET_USER_ID"] = "目标用户 ID 应为纯数字"
             if values.get("STORAGE_BACKEND") == "webdav" and not values.get("WEBDAV_URL"):
                 errors["WEBDAV_URL"] = "WebDAV 后端需要填写地址"
 
@@ -593,11 +617,18 @@ def create_app(api, db, rules, scheduler) -> Flask:
                 cfg = ConfigFile()
                 cfg.set_many({k: v for k, v in values.items() if cfg.get(k) != v})
                 cfg.save()
-                old_token, old_proxy = config.PIXIV_REFRESH_TOKEN, config.HTTPS_PROXY
+                old_token = config.PIXIV_REFRESH_TOKEN
+                old_download_token = config.PIXIV_DOWNLOAD_REFRESH_TOKEN
+                old_proxy = config.HTTPS_PROXY
                 config.reload(force=True)
-                _apply_runtime_changes(api, old_token, old_proxy)
-                flash("首次配置完成，可以开始使用了。", "ok")
-                return redirect(url_for("index"))
+                _apply_runtime_changes(
+                    api, download_api, old_token, old_download_token, old_proxy,
+                )
+                flash(
+                    "配置完成。下一步：刷新关注列表，把要下载的画师加入抓取计划。",
+                    "ok",
+                )
+                return redirect(url_for("browse", view="plan", setup=1))
             flash("请检查标红的必填项", "error")
 
         if values is None:
@@ -608,7 +639,7 @@ def create_app(api, db, rules, scheduler) -> Flask:
                 "key": key, "label": label, "kind": kind, "help": help_text,
                 "options": options, "value": values.get(key, ""),
                 "error": (errors or {}).get(key, ""),
-                "required": key in ("PIXIV_REFRESH_TOKEN", "TARGET_USER_ID"),
+                "required": key == "PIXIV_REFRESH_TOKEN",
             })
         return render_template("setup.html", fields=fields, active=None, hide_nav=True)
 
@@ -697,7 +728,7 @@ def create_app(api, db, rules, scheduler) -> Flask:
         status = scheduler.status() if scheduler else {
             "running": False, "paused": False, "mode": "未运行",
             "next_run": None, "last_run": None, "last_stats": None,
-            "target_user_id": config.TARGET_USER_ID, "progress": {},
+            "pixiv_user_id": getattr(api, "user_id", None), "progress": {},
         }
         db_stats = db.stats() if db else {"downloaded": 0, "artists": 0}
         recent = db.list_downloaded(limit=6)["rows"] if db else []
@@ -730,9 +761,13 @@ def create_app(api, db, rules, scheduler) -> Flask:
                 changed = {k: v for k, v in values.items() if cfg.get(k) != v}
                 cfg.set_many(changed)
                 cfg.save()
-                old_token, old_proxy = config.PIXIV_REFRESH_TOKEN, config.HTTPS_PROXY
+                old_token = config.PIXIV_REFRESH_TOKEN
+                old_download_token = config.PIXIV_DOWNLOAD_REFRESH_TOKEN
+                old_proxy = config.HTTPS_PROXY
                 config.reload(force=True)
-                _apply_runtime_changes(api, old_token, old_proxy)
+                _apply_runtime_changes(
+                    api, download_api, old_token, old_download_token, old_proxy,
+                )
                 flash("系统配置已保存", "ok")
                 return redirect(url_for("config_page"))
             flash("配置校验未通过，请检查标红字段", "error")
@@ -829,6 +864,45 @@ def create_app(api, db, rules, scheduler) -> Flask:
             flash(f"没有找到 tag 规则：{tag}", "warn")
         return redirect(_safe_next(request.form.get("next"), url_for("rules_page")))
 
+    @app.get("/rules/tags/export")
+    def rules_tags_export():
+        payload = json.dumps(rules.export_tags(), ensure_ascii=False, indent=2)
+        return Response(
+            payload, mimetype="application/json",
+            headers={
+                "Content-Disposition": "attachment; filename=tag-rules.json",
+                "Cache-Control": "no-store",
+            },
+        )
+
+    @app.post("/rules/tags/import")
+    def rules_tags_import():
+        upload = request.files.get("file")
+        raw = ""
+        if upload is not None and upload.filename:
+            raw = upload.read(1024 * 1024 + 1).decode("utf-8", "ignore")
+            if len(raw) > 1024 * 1024:
+                flash("文件过大（最多 1MB）", "error")
+                return redirect(url_for("rules_page"))
+        else:
+            raw = (request.form.get("text") or "").strip()
+        if not raw:
+            flash("请选择 JSON 文件或粘贴内容", "warn")
+            return redirect(url_for("rules_page"))
+        try:
+            data = json.loads(raw)
+            replace = request.form.get("mode") == "replace"
+            result = rules.import_tags(data, replace=replace)
+        except (ValueError, TypeError) as e:
+            flash(f"导入失败：{e}", "error")
+            return redirect(url_for("rules_page"))
+        flash(
+            f"已导入 {result['added']} 条 tag 规则"
+            f"（{'替换' if result['replaced'] else '合并'}）",
+            "ok",
+        )
+        return redirect(url_for("rules_page"))
+
     @app.post("/rules/reset-watermarks")
     def rules_reset_watermarks():
         count = rules.reset_watermarks()
@@ -838,13 +912,33 @@ def create_app(api, db, rules, scheduler) -> Flask:
     # ---------- 作品浏览 ----------
     @app.get("/browse")
     def browse():
+        view = request.args.get("view") or "following"
+        if view not in ("following", "plan"):
+            view = "following"
         preview = request.args.get("preview") in ("1", "true", "yes")
         show_ignored = request.args.get("ignored") in ("1", "true", "yes")
+        privacy = request.args.get("privacy") or "all"
+        if privacy not in ("all", "public", "private"):
+            privacy = "all"
+
         following = db.following() if db else []
+        plan = db.plan_artists() if db else []
+        plan_ids = {a["artist_id"] for a in plan}
         ignored_count = sum(1 for a in following if a.get("ignored"))
-        visible = following if show_ignored else [
-            a for a in following if not a.get("ignored")
-        ]
+
+        if not request.args.get("view") and not following and plan:
+            view = "plan"
+        if view == "plan":
+            visible = plan
+        else:
+            visible = [
+                a for a in following
+                if (show_ignored or not a.get("ignored"))
+                and (privacy == "all"
+                     or (privacy == "private" and a.get("is_private"))
+                     or (privacy == "public" and not a.get("is_private")))
+            ]
+
         counts = {}
         if db:
             counts = {a["id"]: a["count"] for a in db.artist_options()}
@@ -857,17 +951,24 @@ def create_app(api, db, rules, scheduler) -> Flask:
         for artist in visible:
             item = dict(artist)
             item["downloaded"] = counts.get(artist["artist_id"], 0)
+            item["in_plan"] = artist["artist_id"] in plan_ids
             artists.append(item)
+
         return render_template(
             "browse.html", active="browse", artists=artists,
             updated_at=(db.following_updated_at() if db else None),
-            target_user_id=config.TARGET_USER_ID,
+            pixiv_user_id=getattr(api, "user_id", None),
             auth_ok=_api_authed(api),
             preview=preview,
             downloaded=downloaded,
             has_previews=any(a.get("previews") for a in visible),
             show_ignored=show_ignored,
             ignored_count=ignored_count,
+            view=view,
+            privacy=privacy,
+            plan_count=len(plan_ids),
+            following_count=len(following),
+            setup=request.args.get("setup") in ("1", "true", "yes"),
         )
 
     @app.post("/browse/refresh")
@@ -876,18 +977,81 @@ def create_app(api, db, rules, scheduler) -> Flask:
             flash("Pixiv 未认证，无法刷新关注列表", "error")
             return redirect(url_for("browse"))
         try:
-            following = get_following_users(api, config.TARGET_USER_ID)
-            if not following:
-                # 请求失败或确实没有关注：保留旧缓存，避免把列表清空
-                flash("没有获取到关注画师，已保留原缓存", "warn")
-            else:
-                if db:
-                    db.replace_following(following)
-                flash(f"已刷新关注列表：{len(following)} 位画师", "ok")
+            users = sync_following(api, db)
+            public = sum(1 for u in users if not u.get("is_private"))
+            private = len(users) - public
+            flash(f"关注列表已同步：公开 {public} 位，隐藏 {private} 位", "ok")
         except Exception as e:
             logger.error(f"刷新关注列表失败: {e}")
             flash(f"刷新失败：{e}", "error")
-        return redirect(url_for("browse"))
+        return redirect(_safe_next(request.form.get("next"),
+                                   url_for("browse", view="plan")))
+
+    @app.post("/plan/toggle/<int:artist_id>")
+    def plan_toggle(artist_id):
+        if not db:
+            flash("数据库不可用", "error")
+            return redirect(url_for("browse"))
+        default = url_for("browse", view="plan")
+        action = request.form.get("action") or (
+            "remove" if artist_id in db.plan_ids() else "add"
+        )
+        if action == "remove":
+            db.remove_from_plan(artist_id)
+            flash("已移出抓取计划", "ok")
+        else:
+            artist = next(
+                (a for a in db.following() if a["artist_id"] == artist_id), None
+            ) or db.get_plan_artist(artist_id)
+            if not artist and api is not None and _api_authed(api):
+                try:
+                    resp = api_call(api, api.user_detail, artist_id) or {}
+                    user = resp.get("user") or {}
+                    artist = {
+                        "artist_name": user.get("name") or f"画师 {artist_id}",
+                        "avatar_url": (user.get("profile_image_urls") or {}).get("medium"),
+                    }
+                except Exception as e:
+                    logger.warning(f"获取画师 {artist_id} 信息失败: {e}")
+            if not artist:
+                artist = {"artist_name": f"画师 {artist_id}", "avatar_url": None}
+            db.add_to_plan(
+                artist_id,
+                artist.get("artist_name") or "",
+                artist.get("avatar_url"),
+            )
+            flash("已加入抓取计划", "ok")
+        return redirect(_safe_next(request.form.get("next"), default))
+
+    @app.post("/plan/add")
+    def plan_add():
+        if not db:
+            flash("数据库不可用", "error")
+            return redirect(url_for("browse", view="plan"))
+        raw = (request.form.get("artist") or "").strip()
+        match = re.search(r"(\d+)", raw)
+        if not match:
+            flash("请输入画师 ID 或 Pixiv 主页链接", "error")
+            return redirect(url_for("browse", view="plan"))
+        artist_id = int(match.group(1))
+        if artist_id in db.plan_ids():
+            flash("该画师已经在抓取计划中", "warn")
+            return redirect(url_for("browse", view="plan"))
+
+        name, avatar = "", None
+        if api is not None and _api_authed(api):
+            try:
+                resp = api_call(api, api.user_detail, artist_id) or {}
+                user = resp.get("user") or {}
+                name = user.get("name") or ""
+                avatar = (user.get("profile_image_urls") or {}).get("medium")
+            except Exception as e:
+                logger.warning(f"获取画师 {artist_id} 信息失败: {e}")
+        if not name:
+            name = f"画师 {artist_id}"
+        db.add_to_plan(artist_id, name, avatar)
+        flash(f"已把「{name}」加入抓取计划", "ok")
+        return redirect(url_for("browse", view="plan"))
 
     @app.get("/browse/<int:artist_id>")
     def browse_artist(artist_id):
@@ -898,17 +1062,21 @@ def create_app(api, db, rules, scheduler) -> Flask:
         per_page = 30
         offset = (page - 1) * per_page
 
+        following = db.following() if db else []
         artist = next(
-            (a for a in (db.following() if db else []) if a["artist_id"] == artist_id),
-            None,
+            (a for a in following if a["artist_id"] == artist_id), None
         )
+        in_following = artist is not None
+        if artist is None and db:
+            artist = db.get_plan_artist(artist_id)
         works, has_next, error = [], False, None
-        if api is None or not _api_authed(api):
+        works_api = download_api if _api_authed(download_api) else api
+        if works_api is None or not _api_authed(works_api):
             error = "Pixiv 未认证，无法在线浏览"
         else:
             try:
                 resp = api_call(
-                    api, api.user_illusts, artist_id, type=kind,
+                    works_api, works_api.user_illusts, artist_id, type=kind,
                     offset=offset or None,
                     delay=min(1.0, config.REQUEST_DELAY),
                     jitter=config.REQUEST_JITTER,
@@ -926,6 +1094,7 @@ def create_app(api, db, rules, scheduler) -> Flask:
                         "artist_name": works[0]["author_name"],
                         "avatar_url": None,
                         "ignored": 0,
+                        "is_private": 0,
                     }
             except Exception as e:
                 logger.error(f"浏览画师 {artist_id} 作品失败: {e}")
@@ -939,10 +1108,12 @@ def create_app(api, db, rules, scheduler) -> Flask:
         return render_template(
             "browse_artist.html", active="browse",
             artist=artist or {"artist_id": artist_id, "artist_name": str(artist_id),
-                              "avatar_url": None, "ignored": 0},
+                              "avatar_url": None, "ignored": 0, "is_private": 0},
             works=works, has_next=has_next, error=error,
             kind=kind, page=page, pending=pending,
             downloaded_count=downloaded_count,
+            in_plan=bool(db and artist_id in db.plan_ids()),
+            in_following=in_following,
             favorite_tag_norms={
                 t.strip().lower() for t in (db.favorite_tags() if db else [])
             },

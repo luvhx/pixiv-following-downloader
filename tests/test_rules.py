@@ -145,6 +145,25 @@ class RulesTest(unittest.TestCase):
         errors = self.rules.update({"filename_template": "{unknown}"})
         self.assertIn("filename_template", errors)
 
+    def test_tag_export_import(self):
+        self.rules.add_tag("风景", "include")
+        self.rules.add_tag("R-18", "exclude")
+        exported = self.rules.export_tags()
+        self.assertEqual(exported["include"], ["风景"])
+        self.assertEqual(exported["exclude"], ["R-18"])
+
+        self.rules.remove_tag("风景")
+        result = self.rules.import_tags(
+            {"include": ["风景", "人物"], "exclude": ["R-18"]}, replace=True,
+        )
+        self.assertEqual(result["added"], 3)
+        self.assertEqual(result["replaced"], True)
+        self.assertEqual([t["tag"] for t in self.rules.tags("include")], ["人物", "风景"])
+
+        result = self.rules.import_tags({"include": ["新标签"]})
+        self.assertEqual(result["added"], 1)
+        self.assertIn("新标签", [t["tag"] for t in self.rules.tags("include")])
+
     def test_reset_watermarks(self):
         self.db.set_artist_watermark(1, "a", 100)
         self.db.set_artist_watermark(2, "b", 200)

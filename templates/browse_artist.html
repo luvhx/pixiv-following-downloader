@@ -8,15 +8,27 @@
          style="border-radius:50%;object-fit:cover" onerror="this.style.visibility='hidden'">
     {% endif %}
     {{ artist.artist_name }}
+    {% if artist.is_private %}<span class="badge-off">隐藏关注</span>{% endif %}
+    {% if in_plan %}<span class="badge-off">计划中</span>{% endif %}
   </h1>
   <div class="spacer"></div>
   <div class="btn-row">
+    <form method="post" action="{{ url_for('plan_toggle', artist_id=artist.artist_id) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ request.full_path }}">
+      <input type="hidden" name="action" value="{{ 'remove' if in_plan else 'add' }}">
+      <button class="btn {{ '' if in_plan else 'primary' }}" type="submit">
+        {{ '移出抓取计划' if in_plan else '加入抓取计划' }}
+      </button>
+    </form>
+    {% if in_following %}
     <form method="post" action="{{ url_for('browse_ignore', artist_id=artist.artist_id) }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
       <input type="hidden" name="next" value="{{ request.full_path }}">
       <input type="hidden" name="ignored" value="{{ 0 if artist.ignored else 1 }}">
       <button class="btn" type="submit">{{ '恢复同步' if artist.ignored else '暂停同步' }}</button>
     </form>
+    {% endif %}
     <a class="btn" href="{{ url_for('browse') }}">返回画师列表</a>
     <a class="btn" href="https://www.pixiv.net/users/{{ artist.artist_id }}" target="_blank" rel="noopener">Pixiv 主页</a>
   </div>

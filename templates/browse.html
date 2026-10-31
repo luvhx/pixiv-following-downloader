@@ -1,41 +1,81 @@
 {% extends "base.html" %}
-{% block title %}关注画师 · Pixiv Following Downloader{% endblock %}
+{% block title %}画师 · Pixiv Following Downloader{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>关注画师</h1>
+  <h1>画师</h1>
   <div class="spacer"></div>
   <div class="btn-row">
-    <input type="search" id="artistFilter" placeholder="筛选画师名" style="width:180px">
+    <input type="search" id="artistFilter" placeholder="筛选画师名" style="width:160px">
     <a class="btn {{ 'primary' if preview }}"
-       href="{{ url_for('browse', preview=None if preview else 1, ignored=1 if show_ignored else None) }}">
-      {{ '关闭代表作预览' if preview else '预览代表作' }}
+       href="{{ url_for('browse', view=view, privacy=None if privacy == 'all' else privacy,
+                        preview=None if preview else 1) }}">
+      {{ '关闭预览' if preview else '预览代表作' }}
     </a>
-    {% if ignored_count %}
-    <a class="btn"
-       href="{{ url_for('browse', ignored=None if show_ignored else 1, preview=1 if preview else None) }}">
-      {{ '隐藏已暂停' if show_ignored else '显示已暂停（%d）'|format(ignored_count) }}
-    </a>
-    {% endif %}
     <form method="post" action="{{ url_for('browse_refresh') }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-      <button class="btn primary" type="submit" {% if not auth_ok %}disabled{% endif %}>刷新关注列表</button>
+      <input type="hidden" name="next" value="{{ url_for('browse', view='plan') }}">
+      <button class="btn primary" type="submit" {% if not auth_ok %}disabled{% endif %}>同步关注列表</button>
     </form>
   </div>
 </div>
 
+<div class="panel" style="padding:10px 12px">
+  <div class="btn-row">
+    <a class="btn {{ 'primary' if view == 'following' }}"
+       href="{{ url_for('browse', view='following', preview=1 if preview else None,
+                        privacy=None if privacy == 'all' else privacy) }}">
+      关注列表（{{ following_count }}）
+    </a>
+    <a class="btn {{ 'primary' if view == 'plan' }}"
+       href="{{ url_for('browse', view='plan', preview=1 if preview else None) }}">
+      抓取计划（{{ plan_count }}）
+    </a>
+    <div class="spacer"></div>
+    {% if view == 'following' %}
+    <a class="btn mini {{ 'primary' if privacy == 'all' }}"
+       href="{{ url_for('browse', view='following', preview=1 if preview else None) }}">全部</a>
+    <a class="btn mini {{ 'primary' if privacy == 'public' }}"
+       href="{{ url_for('browse', view='following', privacy='public', preview=1 if preview else None) }}">公开</a>
+    <a class="btn mini {{ 'primary' if privacy == 'private' }}"
+       href="{{ url_for('browse', view='following', privacy='private', preview=1 if preview else None) }}">隐藏</a>
+    {% if ignored_count %}
+    <a class="btn mini"
+       href="{{ url_for('browse', view='following', ignored=None if show_ignored else 1,
+                        privacy=None if privacy == 'all' else privacy, preview=1 if preview else None) }}">
+      {{ '隐藏已暂停' if show_ignored else '显示已暂停（%d）'|format(ignored_count) }}
+    </a>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
+
 <p class="small muted">
-  目标用户 ID：{{ target_user_id or '未设置' }}
-  {% if updated_at %} · 列表更新时间：{{ updated_at }}{% endif %}
+  登录账号：{{ pixiv_user_id or '未认证' }}
+  {% if updated_at %} · 关注列表更新于 {{ updated_at }}{% endif %}
+  · 只会自动抓取「抓取计划」中的画师
 </p>
 
-{% if not auth_ok %}
-<div class="flash flash-warn">Pixiv 未认证，无法刷新关注列表或在线浏览作品。请到「配置」页检查 refresh_token。</div>
+{% if setup %}
+<div class="flash flash-ok">
+  配置完成。先点「同步关注列表」，再把需要下载的画师加入抓取计划；也可以直接添加未关注的画师 ID。
+</div>
 {% endif %}
-
+{% if not auth_ok %}
+<div class="flash flash-warn">Pixiv 未认证，无法同步关注列表或在线浏览。请到「配置」页检查 refresh_token。</div>
+{% endif %}
 {% if preview and not has_previews %}
 <div class="flash flash-warn">
-  当前缓存里还没有画师作品预览。点「刷新关注列表」拉取一次，或等下一轮自动运行后即可显示。
+  当前缓存里还没有画师作品预览。同步一次关注列表，或等下一轮自动运行后即可显示。
 </div>
+{% endif %}
+
+{% if view == 'plan' %}
+<form class="filterbar" method="post" action="{{ url_for('plan_add') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+  <input type="text" name="artist" style="flex:1;min-width:220px"
+         placeholder="画师 ID 或主页链接，例如 12345678 / https://www.pixiv.net/users/12345678">
+  <button class="btn primary" type="submit">添加到抓取计划</button>
+</form>
 {% endif %}
 
 {% if artists %}
@@ -50,10 +90,38 @@
       <span class="avatar"></span>
       {% endif %}
       <span class="info">
-        <span class="name">{{ a.artist_name or a.artist_id }}{% if a.ignored %} <span class="badge-off">已暂停</span>{% endif %}</span>
-        <span class="sub">ID {{ a.artist_id }} · 已下载 {{ a.downloaded }} · 查看全部作品 →</span>
+        <span class="name">
+          {{ a.artist_name or a.artist_id }}
+          {% if a.is_private %}<span class="badge-off">隐藏关注</span>{% endif %}
+          {% if a.ignored %}<span class="badge-off">已暂停</span>{% endif %}
+        </span>
+        <span class="sub">ID {{ a.artist_id }} · 已下载 {{ a.downloaded }} · 查看作品 →</span>
       </span>
     </a>
+    <div class="artist-actions">
+      {% if view == 'plan' %}
+      <form method="post" action="{{ url_for('plan_toggle', artist_id=a.artist_id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="remove">
+        <input type="hidden" name="next" value="{{ request.full_path }}">
+        <button class="btn mini danger" type="submit">移出计划</button>
+      </form>
+      {% elif a.in_plan %}
+      <form method="post" action="{{ url_for('plan_toggle', artist_id=a.artist_id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="remove">
+        <input type="hidden" name="next" value="{{ request.full_path }}">
+        <button class="btn mini" type="submit">移出计划</button>
+      </form>
+      {% else %}
+      <form method="post" action="{{ url_for('plan_toggle', artist_id=a.artist_id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="add">
+        <input type="hidden" name="next" value="{{ request.full_path }}">
+        <button class="btn mini primary" type="submit">加入计划</button>
+      </form>
+      {% endif %}
+    </div>
     {% if preview %}
       {% if a.previews %}
       <div class="artist-previews">
@@ -74,7 +142,7 @@
         {% endfor %}
       </div>
       {% else %}
-      <div class="artist-previews hint">暂无预览，刷新关注列表后显示</div>
+      <div class="artist-previews hint">暂无预览，同步关注列表后显示</div>
       {% endif %}
     {% endif %}
   </div>
@@ -82,12 +150,21 @@
 </div>
 {% else %}
 <div class="panel empty">
-  {% if ignored_count and not show_ignored %}
+  {% if view == 'plan' %}
+  <div class="big">抓取计划还是空的</div>
+  <p class="small">
+    从<a href="{{ url_for('browse', view='following') }}">关注列表</a>选择画师，或在上方直接添加未关注画师的 ID。
+    只有计划中的画师会被自动抓取。
+  </p>
+  {% elif ignored_count and not show_ignored %}
   <div class="big">所有画师都已暂停同步</div>
-  <p class="small"><a href="{{ url_for('browse', ignored=1) }}">显示已暂停的画师</a>，或在画师页恢复同步。</p>
+  <p class="small"><a href="{{ url_for('browse', view='following', ignored=1) }}">显示已暂停的画师</a>，或在画师页恢复同步。</p>
+  {% elif following_count %}
+  <div class="big">没有匹配的画师</div>
+  <p class="small">试着切换公开/隐藏筛选或清除筛选。</p>
   {% else %}
   <div class="big">还没有关注列表缓存</div>
-  <p class="small">点击右上角「刷新关注列表」从 Pixiv 拉取，之后每次自动运行也会同步更新。</p>
+  <p class="small">点右上角「同步关注列表」从 Pixiv 拉取公开和隐藏关注。</p>
   {% endif %}
 </div>
 {% endif %}

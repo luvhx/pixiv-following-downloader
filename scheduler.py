@@ -12,7 +12,7 @@ from croniter import croniter
 
 import config
 from pixiv import (
-    get_following_users, get_user_illusts, is_authenticated,
+    get_user_illusts, is_authenticated, sync_following,
     should_exclude, matches_include, meets_bookmark_requirement,
     download_illust, reauthenticate,
 )
@@ -27,9 +27,13 @@ _EMPTY_STATS = {
 }
 
 
-def run_once(api, db, target_user_id: str, rules: dict,
+def run_once(api, db, rules: dict, download_api=None,
              should_stop=None, progress=None) -> dict:
-    """执行一轮抓取与下载，返回统计。"""
+    """执行一轮抓取与下载，返回统计。
+
+    api 负责读取关注列表；download_api 负责抓取作品与下载，未配置时复用 api。
+    """
+    download_api = download_api or api
 
     def report(**fields):
         if progress:
@@ -38,33 +42,26 @@ def run_once(api, db, target_user_id: str, rules: dict,
             except Exception:
                 pass
 
-    if not target_user_id:
-        logger.error("未配置 TARGET_USER_ID，跳过本轮（可在配置页设置）")
-        return None
-
     logger.info("=" * 60)
-    logger.info(f"开始抓取用户 {target_user_id} 的关注列表...")
-
+    logger.info("同步当前账号的关注列表...")
     try:
-        following = get_following_users(api, target_user_id)
+        sync_following(api, db)
     except Exception as e:
-        logger.error(f"获取关注列表失败，本轮跳过: {e}")
-        return dict(_EMPTY_STATS)
-    if following:
-        # 缓存到数据库，供「作品浏览」使用
-        db.replace_following(following)
-    if not following:
-        logger.warning("关注列表为空")
+        logger.error(f"同步关注列表失败，本轮仍按现有抓取计划执行: {e}")
+
+    plan = db.plan_artists()
+    if not plan:
+        logger.warning("抓取计划为空，请在「画师」页把需要下载的画师加入计划")
         return dict(_EMPTY_STATS)
 
     stats = dict(_EMPTY_STATS)
-    stats["artists"] = len(following)
+    stats["artists"] = len(plan)
     illust_type = rules.get("illust_type", "illust")
     max_per_artist = int(rules.get("max_per_artist", 0) or 0)
     ignored_ids = db.ignored_artist_ids() if db else set()
-    report(index=0, total=len(following))
+    report(index=0, total=len(plan))
 
-    for idx, artist in enumerate(following, 1):
+    for idx, artist in enumerate(plan, 1):
         if should_stop and should_stop():
             logger.info("已暂停，本轮提前结束")
             break
@@ -78,22 +75,22 @@ def run_once(api, db, target_user_id: str, rules: dict,
                 logger.info("冷却期间被暂停，本轮提前结束")
                 break
 
-        artist_id = artist["user_id"]
-        artist_name = artist["user_name"]
-        report(index=idx, total=len(following), artist=artist_name, work=None)
+        artist_id = artist["artist_id"]
+        artist_name = artist["artist_name"]
+        report(index=idx, total=len(plan), artist=artist_name, work=None)
         if artist_id in ignored_ids:
             stats["skipped_ignored"] += 1
             logger.info(f"  ↷ 已暂停同步，跳过画师: {artist_name}")
             continue
         watermark = db.artist_watermark(artist_id)
         logger.info(
-            f"[{idx}/{len(following)}] 处理画师: {artist_name} "
+            f"[{idx}/{len(plan)}] 处理画师: {artist_name} "
             f"(ID: {artist_id}, 水位: {watermark or '无'})"
         )
 
         try:
             illusts, complete = get_user_illusts(
-                api, artist_id, illust_type=illust_type,
+                download_api, artist_id, illust_type=illust_type,
                 stop_at_id=watermark,
             )
         except Exception as e:
@@ -117,7 +114,7 @@ def run_once(api, db, target_user_id: str, rules: dict,
 
             stats["scanned"] += 1
             report(
-                index=idx, total=len(following), artist=artist_name,
+                index=idx, total=len(plan), artist=artist_name,
                 work=illust.get("title") or str(illust["id"]),
             )
 
@@ -150,7 +147,7 @@ def run_once(api, db, target_user_id: str, rules: dict,
                 limit_hit = True
                 continue
 
-            if download_illust(api, illust, db, rules):
+            if download_illust(download_api, illust, db, rules):
                 downloaded_here += 1
                 stats["downloaded"] += 1
             else:
@@ -198,12 +195,12 @@ def _interruptible_sleep(seconds: float, should_stop=None) -> bool:
 
 
 class Scheduler(threading.Thread):
-    def __init__(self, api, db, rules, target_user_id_override: str = None):
+    def __init__(self, api, download_api, db, rules):
         super().__init__(daemon=True, name="scheduler")
         self.api = api
+        self.download_api = download_api or api
         self.db = db
         self.rules = rules
-        self._target_override = target_user_id_override
 
         self._wake = threading.Event()
         self._schedule_dirty = threading.Event()
@@ -238,7 +235,7 @@ class Scheduler(threading.Thread):
             "next_run": self._fmt(self._next_run),
             "last_run": self._fmt(self._last_run),
             "last_stats": self._last_stats,
-            "target_user_id": self._target_override or config.TARGET_USER_ID,
+            "pixiv_user_id": getattr(self.api, "user_id", None),
             "progress": self.progress(),
         }
 
@@ -360,9 +357,13 @@ class Scheduler(threading.Thread):
                 self._last_stats = None
                 return
             rules = self.rules.snapshot(refresh=True)
-            target = self._target_override or config.TARGET_USER_ID
+            if not _ensure_authenticated(self.download_api):
+                logger.error("下载账号未通过认证，本轮跳过")
+                self._last_stats = None
+                return
             self._last_stats = run_once(
-                self.api, self.db, target, rules,
+                self.api, self.db, rules,
+                download_api=self.download_api,
                 should_stop=lambda: self._paused,
                 progress=self._set_progress,
             )

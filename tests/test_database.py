@@ -162,6 +162,15 @@ class DownloadDBTest(unittest.TestCase):
         names = [r["artist_name"] for r in self.db.following()]
         self.assertEqual(names, ["B2"])
 
+    def test_plan(self):
+        self.db.add_to_plan(1, "A")
+        self.db.add_to_plan(2, "B")
+        self.assertEqual(self.db.plan_ids(), {1, 2})
+        self.db.replace_following([{"user_id": 1, "user_name": "A2"}])
+        self.assertEqual(self.db.plan_artists()[0]["artist_name"], "A2")
+        self.assertTrue(self.db.remove_from_plan(2))
+        self.assertEqual(self.db.plan_ids(), {1})
+
     def test_ignored_artists_survive_refresh(self):
         self.db.replace_following([{"user_id": 1, "user_name": "A"}])
         self.assertTrue(self.db.set_artist_ignored(1, True))
@@ -171,13 +180,13 @@ class DownloadDBTest(unittest.TestCase):
         self.assertEqual(self.db.following()[0]["ignored"], 1)
 
     def test_settings(self):
-        self.assertEqual(self.db.get_settings(), {})
+        # 初始化时会写入 plan_seeded 标记
+        self.assertEqual(self.db.get_settings().get("plan_seeded"), "1")
         self.db.set_settings({"download_kind": "large"})
         self.db.set_settings({"download_kind": "medium", "max_per_artist": "3"})
-        self.assertEqual(
-            self.db.get_settings(),
-            {"download_kind": "medium", "max_per_artist": "3"},
-        )
+        settings = self.db.get_settings()
+        self.assertEqual(settings["download_kind"], "medium")
+        self.assertEqual(settings["max_per_artist"], "3")
 
     def test_related_works(self):
         self._add(1, tags=("风景", "海"))
@@ -234,6 +243,37 @@ class BookmarksMigrationTest(unittest.TestCase):
             self.assertIn("bookmarks", cols)
         finally:
             db.close()
+            tmp.cleanup()
+
+
+class PlanSeedMigrationTest(unittest.TestCase):
+    def test_existing_following_seeds_plan_once(self):
+        tmp = tempfile.TemporaryDirectory()
+        path = os.path.join(tmp.name, "old.db")
+        conn = sqlite3.connect(path)
+        conn.execute("""
+            CREATE TABLE following (
+                artist_id INTEGER PRIMARY KEY, artist_name TEXT NOT NULL DEFAULT '',
+                avatar_url TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("INSERT INTO following (artist_id, artist_name) VALUES (1, 'A')")
+        conn.commit()
+        conn.close()
+
+        db = DownloadDB(path)
+        try:
+            self.assertEqual(db.plan_ids(), {1})
+            db.remove_from_plan(1)
+        finally:
+            db.close()
+
+        again = DownloadDB(path)
+        try:
+            # 已移除的计划不会因为重启被重新加回
+            self.assertEqual(again.plan_ids(), set())
+        finally:
+            again.close()
             tmp.cleanup()
 
 

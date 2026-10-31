@@ -242,7 +242,8 @@ class FollowingFetchTest(unittest.TestCase):
 
         users = pixiv.get_following_users(Api(), "1")
         self.assertEqual(users, [{
-            "user_id": 5, "user_name": "A", "avatar_url": "http://a", "previews": [],
+            "user_id": 5, "user_name": "A", "avatar_url": "http://a",
+            "is_private": 0, "previews": [],
         }])
 
 
@@ -295,6 +296,41 @@ class IncrementalFetchTest(unittest.TestCase):
         illusts, complete = pixiv.get_user_illusts(api, 1, illust_type="all")
         self.assertEqual([i["id"] for i in illusts], [101, 100])
         self.assertTrue(complete)
+
+
+class SyncFollowingTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = DownloadDB(os.path.join(self.tmp.name, "t.db"))
+
+    def tearDown(self):
+        self.db.close()
+        self.tmp.cleanup()
+
+    def test_sync_public_and_private(self):
+        class Api:
+            user_id = 9
+
+            def user_following(self, user_id, restrict="public", **kwargs):
+                if restrict == "private":
+                    return {"user_previews": [{
+                        "user": {"id": 2, "name": "Hidden"},
+                        "illusts": [],
+                    }], "next_url": None}
+                return {"user_previews": [{
+                    "user": {"id": 1, "name": "Public"},
+                    "illusts": [],
+                }], "next_url": None}
+
+            @staticmethod
+            def parse_qs(url):
+                return None
+
+        users = pixiv.sync_following(Api(), self.db)
+        rows = {r["artist_id"]: r for r in self.db.following()}
+        self.assertEqual(len(users), 2)
+        self.assertEqual(rows[1]["is_private"], 0)
+        self.assertEqual(rows[2]["is_private"], 1)
 
 
 class NamingTest(unittest.TestCase):

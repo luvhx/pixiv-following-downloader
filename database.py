@@ -53,6 +53,7 @@ class DownloadDB:
 
         conn = self._conn()
         self._migrate(conn)
+        self._seed_plan_from_following()
         self._initialized = True
 
     # ---------- 连接管理 ----------
@@ -172,6 +173,7 @@ class DownloadDB:
                 artist_name TEXT NOT NULL DEFAULT '',
                 avatar_url  TEXT,
                 previews    TEXT NOT NULL DEFAULT '[]',
+                is_private  INTEGER NOT NULL DEFAULT 0,
                 ignored     INTEGER NOT NULL DEFAULT 0,
                 updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -180,6 +182,14 @@ class DownloadDB:
             CREATE TABLE IF NOT EXISTS settings (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS plan (
+                artist_id   INTEGER PRIMARY KEY,
+                artist_name TEXT NOT NULL DEFAULT '',
+                avatar_url  TEXT,
+                added_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tags_norm ON illust_tags(norm)")
@@ -266,6 +276,11 @@ class DownloadDB:
             logger.info("数据库迁移：following 增加 ignored 列")
             conn.execute(
                 "ALTER TABLE following ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0"
+            )
+        if cols and "is_private" not in cols:
+            logger.info("数据库迁移：following 增加 is_private 列")
+            conn.execute(
+                "ALTER TABLE following ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0"
             )
 
     # ---------- 已下载 ----------
@@ -662,6 +677,10 @@ class DownloadDB:
             )
         return True
 
+    def clear_tag_rules(self):
+        with self._write() as conn:
+            conn.execute("DELETE FROM tag_rules")
+
     def remove_tag_rule(self, tag: str) -> bool:
         with self._write() as conn:
             cur = conn.execute(
@@ -729,18 +748,21 @@ class DownloadDB:
                 previews = artist.get("previews") or []
                 conn.execute(
                     """INSERT INTO following
-                           (artist_id, artist_name, avatar_url, previews, updated_at)
-                       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                           (artist_id, artist_name, avatar_url, previews,
+                            is_private, updated_at)
+                       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                        ON CONFLICT(artist_id) DO UPDATE SET
                            artist_name = excluded.artist_name,
                            avatar_url = COALESCE(excluded.avatar_url, following.avatar_url),
                            previews = excluded.previews,
+                           is_private = excluded.is_private,
                            updated_at = CURRENT_TIMESTAMP""",
                     (
                         int(artist_id),
                         artist.get("user_name") or artist.get("artist_name") or "",
                         artist.get("avatar_url") or None,
                         json.dumps(previews, ensure_ascii=False),
+                        1 if artist.get("is_private") else 0,
                     ),
                 )
             if seen:
@@ -751,8 +773,8 @@ class DownloadDB:
 
     def following(self) -> list:
         rows = self._conn().execute(
-            "SELECT artist_id, artist_name, avatar_url, previews, ignored, updated_at "
-            "FROM following ORDER BY artist_name COLLATE NOCASE"
+            "SELECT artist_id, artist_name, avatar_url, previews, is_private, "
+            "ignored, updated_at FROM following ORDER BY artist_name COLLATE NOCASE"
         ).fetchall()
         result = []
         for row in rows:
@@ -763,6 +785,85 @@ class DownloadDB:
                 item["previews"] = []
             result.append(item)
         return result
+
+    def _seed_plan_from_following(self):
+        """升级兼容：第一次启动时把已有的人际关注加入抓取计划。"""
+        try:
+            if (self.get_settings().get("plan_seeded") or "") == "1":
+                return
+            with self._write() as conn:
+                count = conn.execute("SELECT COUNT(*) AS c FROM plan").fetchone()["c"]
+                added = 0
+                if count == 0:
+                    cur = conn.execute(
+                        "INSERT OR IGNORE INTO plan (artist_id, artist_name, avatar_url) "
+                        "SELECT artist_id, artist_name, avatar_url FROM following"
+                    )
+                    added = cur.rowcount
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('plan_seeded', '1') "
+                    "ON CONFLICT(key) DO UPDATE SET value = '1'"
+                )
+            if added:
+                logger.info(f"已将 {added} 位关注画师加入抓取计划（可在画师页调整）")
+        except Exception as e:
+            logger.warning(f"初始化抓取计划失败: {e}")
+
+    def plan_artists(self) -> list:
+        rows = self._conn().execute(
+            """SELECT p.artist_id,
+                      CASE WHEN f.artist_name IS NOT NULL AND f.artist_name != ''
+                           THEN f.artist_name ELSE p.artist_name END AS artist_name,
+                      COALESCE(f.avatar_url, p.avatar_url) AS avatar_url,
+                      p.added_at,
+                      IFNULL(f.is_private, 0) AS is_private,
+                      IFNULL(f.ignored, 0) AS ignored,
+                      f.previews AS previews
+               FROM plan p LEFT JOIN following f ON f.artist_id = p.artist_id
+               ORDER BY artist_name COLLATE NOCASE"""
+        ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["previews"] = json.loads(item.get("previews") or "[]")
+            except (TypeError, ValueError):
+                item["previews"] = []
+            result.append(item)
+        return result
+
+    def plan_ids(self) -> set:
+        rows = self._conn().execute("SELECT artist_id FROM plan").fetchall()
+        return {r["artist_id"] for r in rows}
+
+    def get_plan_artist(self, artist_id: int):
+        rows = self.plan_artists()
+        return next((a for a in rows if a["artist_id"] == artist_id), None)
+
+    def add_to_plan(self, artist_id: int, artist_name: str = "", avatar_url=None) -> bool:
+        try:
+            artist_id = int(artist_id)
+        except (TypeError, ValueError):
+            return False
+        if artist_id <= 0:
+            return False
+        with self._write() as conn:
+            conn.execute(
+                """INSERT INTO plan (artist_id, artist_name, avatar_url)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(artist_id) DO UPDATE SET
+                       artist_name = CASE WHEN excluded.artist_name != ''
+                                          THEN excluded.artist_name
+                                          ELSE plan.artist_name END,
+                       avatar_url = COALESCE(excluded.avatar_url, plan.avatar_url)""",
+                (artist_id, artist_name or "", avatar_url),
+            )
+        return True
+
+    def remove_from_plan(self, artist_id: int) -> bool:
+        with self._write() as conn:
+            cur = conn.execute("DELETE FROM plan WHERE artist_id = ?", (int(artist_id),))
+            return cur.rowcount > 0
 
     def set_artist_ignored(self, artist_id: int, ignored: bool) -> bool:
         with self._write() as conn:

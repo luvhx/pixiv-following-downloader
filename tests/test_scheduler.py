@@ -13,7 +13,10 @@ import scheduler  # noqa: E402
 from database import DownloadDB  # noqa: E402
 from rules import Rules  # noqa: E402
 
-FOLLOWING = [{"user_id": 55, "user_name": "Artist", "avatar_url": None}]
+FOLLOWING = [{
+    "user_id": 55, "user_name": "Artist", "avatar_url": None,
+    "is_private": 0, "previews": [],
+}]
 
 
 def make_rules(**overrides):
@@ -45,19 +48,28 @@ class SchedulerRunTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = DownloadDB(os.path.join(self.tmp.name, "t.db"))
+        self.db.add_to_plan(55, "Artist")
 
     def tearDown(self):
         self.db.close()
         self.tmp.cleanup()
 
     def run_once(self, illusts, rules=None, complete=True, ok=True):
-        with mock.patch.object(scheduler, "get_following_users", return_value=FOLLOWING), \
+        with mock.patch.object(scheduler, "sync_following", return_value=FOLLOWING), \
              mock.patch.object(scheduler, "get_user_illusts",
                                return_value=(illusts, complete)), \
              mock.patch.object(scheduler, "download_illust", return_value=ok):
             return scheduler.run_once(
-                object(), self.db, "123", rules or make_rules()
+                object(), self.db, rules or make_rules()
             )
+
+    def test_empty_plan_does_nothing(self):
+        self.db.remove_from_plan(55)
+        with mock.patch.object(scheduler, "sync_following", return_value=FOLLOWING), \
+             mock.patch.object(scheduler, "get_user_illusts") as get_illusts:
+            stats = scheduler.run_once(object(), self.db, make_rules())
+        get_illusts.assert_not_called()
+        self.assertEqual(stats["artists"], 0)
 
     def test_incremental_only_processes_new_works(self):
         self.db.set_artist_watermark(55, "Artist", 100)
@@ -71,7 +83,6 @@ class SchedulerRunTest(unittest.TestCase):
         stats = self.run_once([illust(10), illust(9), illust(8)], rules=rules)
         self.assertEqual(stats["downloaded"], 2)
         self.assertEqual(stats["skipped_limit"], 1)
-        # 达到上限时水位不推进，保证被跳过的旧作品下一轮还能看到
         self.assertEqual(self.db.artist_watermark(55), 0)
 
     def test_failure_blocks_watermark(self):
@@ -113,17 +124,17 @@ class SchedulerRunTest(unittest.TestCase):
         self.assertEqual(stats["skipped_existing"], 1)
         self.assertEqual(stats["downloaded"], 1)
 
-    def test_following_cache_updated(self):
-        self.run_once([illust(10)])
-        self.assertEqual([a["artist_id"] for a in self.db.following()], [55])
+    def test_plan_artist_name_from_following(self):
+        self.db.replace_following(FOLLOWING)
+        self.assertEqual(self.db.plan_artists()[0]["artist_name"], "Artist")
 
     def test_ignored_artist_is_skipped(self):
         self.db.replace_following(FOLLOWING)
         self.db.set_artist_ignored(55, True)
-        with mock.patch.object(scheduler, "get_following_users", return_value=FOLLOWING), \
+        with mock.patch.object(scheduler, "sync_following", return_value=FOLLOWING), \
              mock.patch.object(scheduler, "get_user_illusts") as get_illusts, \
              mock.patch.object(scheduler, "download_illust", return_value=True):
-            stats = scheduler.run_once(object(), self.db, "123", make_rules())
+            stats = scheduler.run_once(object(), self.db, make_rules())
         get_illusts.assert_not_called()
         self.assertEqual(stats["skipped_ignored"], 1)
 
@@ -133,27 +144,25 @@ class SchedulerRunTest(unittest.TestCase):
         def progress(**fields):
             events.update(fields)
 
-        with mock.patch.object(scheduler, "get_following_users", return_value=FOLLOWING), \
+        with mock.patch.object(scheduler, "sync_following", return_value=FOLLOWING), \
              mock.patch.object(scheduler, "get_user_illusts",
                                return_value=([illust(10)], True)), \
              mock.patch.object(scheduler, "download_illust", return_value=True):
             scheduler.run_once(
-                object(), self.db, "123", make_rules(), progress=progress,
+                object(), self.db, make_rules(), progress=progress,
             )
         self.assertEqual(events["total"], 1)
         self.assertEqual(events["artist"], "Artist")
         self.assertEqual(events["work"], "work-10")
 
     def test_pause_stops_early(self):
-        with mock.patch.object(scheduler, "get_following_users", return_value=FOLLOWING):
+        with mock.patch.object(scheduler, "sync_following", return_value=FOLLOWING), \
+             mock.patch.object(scheduler, "get_user_illusts") as get_illusts:
             stats = scheduler.run_once(
-                object(), self.db, "123", make_rules(),
-                should_stop=lambda: True,
+                object(), self.db, make_rules(), should_stop=lambda: True,
             )
+        get_illusts.assert_not_called()
         self.assertEqual(stats["downloaded"], 0)
-
-    def test_missing_target(self):
-        self.assertIsNone(scheduler.run_once(object(), self.db, "", make_rules()))
 
 
 class SchedulerRulesTest(unittest.TestCase):
@@ -161,7 +170,7 @@ class SchedulerRulesTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = DownloadDB(os.path.join(self.tmp.name, "t.db"))
         self.rules = Rules(self.db)
-        self.sched = scheduler.Scheduler(None, self.db, self.rules)
+        self.sched = scheduler.Scheduler(None, None, self.db, self.rules)
 
     def tearDown(self):
         self.db.close()
@@ -190,7 +199,6 @@ class SchedulerRulesTest(unittest.TestCase):
             self.sched._initial_run()
             self.assertEqual(run.call_count, 1)
 
-        # 没有调度时启动先跑一次
         self.rules.update({"run_cron": "", "poll_interval": "0"})
         with mock.patch.object(self.sched, "_run_once") as run:
             self.sched._initial_run()

@@ -72,6 +72,20 @@
     「排除」命中任意一个 tag，或标题包含该词，就跳过该作品。
     tag 匹配不区分大小写，并按完整 tag 名精确匹配。
   </p>
+  <div class="btn-row" style="margin-bottom:12px">
+    <a class="btn mini" href="{{ url_for('rules_tags_export') }}">导出 JSON</a>
+    <form method="post" action="{{ url_for('rules_tags_import') }}"
+          enctype="multipart/form-data" class="btn-row" style="gap:6px">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <input type="file" name="file" accept=".json,application/json"
+             style="width:auto;min-height:30px;padding:3px 6px;font-size:12px">
+      <select name="mode" style="width:auto;min-height:30px;padding:3px 8px;font-size:12px">
+        <option value="merge">合并</option>
+        <option value="replace">替换</option>
+      </select>
+      <button class="btn mini" type="submit">导入</button>
+    </form>
+  </div>
   <div class="tag-manager">
     <div class="tag-block">
       <h3>匹配（include）</h3>

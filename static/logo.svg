@@ -1,27 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Pixiv Following Downloader">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#4F8CFF"/>
-      <stop offset="0.52" stop-color="#6D6BFF"/>
-      <stop offset="1" stop-color="#8B5CF6"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#1C2536"/>
+      <stop offset="1" stop-color="#0C1018"/>
     </linearGradient>
-    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.24"/>
-      <stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0"/>
+    <linearGradient id="accent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7AA8FF"/>
+      <stop offset="1" stop-color="#4F8CFF"/>
     </linearGradient>
-    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#18205A" flood-opacity="0.28"/>
-    </filter>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.10"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
   </defs>
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#bg)"/>
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="url(#sheen)"/>
+  <rect x="25" y="25" width="462" height="462" rx="108" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"/>
 
-  <rect x="28" y="28" width="456" height="456" rx="112" fill="url(#bg)" filter="url(#shadow)"/>
-  <rect x="28" y="28" width="456" height="456" rx="112" fill="url(#shine)"/>
-  <rect x="35" y="35" width="442" height="442" rx="105" fill="none" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="3"/>
+  <!-- 画框 -->
+  <rect x="126" y="108" width="260" height="200" rx="26" fill="none" stroke="#F5F7FB" stroke-width="16"/>
+  <circle cx="198" cy="168" r="17" fill="#F5F7FB"/>
+  <path d="M 150 280 L 210 220 L 258 268 L 296 232 L 360 296" fill="none"
+        stroke="#F5F7FB" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
 
-  <!-- 白色几何 P：Pixiv 的首字母 -->
-  <path fill="#FFFFFF" fill-rule="evenodd" d="M 170 124 H 292 A 102 102 0 0 1 292 328 H 170 Z M 292 184 A 42 42 0 1 1 292 268 A 42 42 0 1 1 292 184 Z"/>
-  <rect x="170" y="124" width="58" height="250" rx="29" fill="#FFFFFF"/>
-
-  <!-- 粉色下载箭头：跟随 + 下载 -->
-  <path fill="#FF5D8F" d="M 132 348 H 266 L 199 448 Z"/>
+  <!-- 下载箭头 -->
+  <path d="M 256 330 V 406" fill="none" stroke="url(#accent)" stroke-width="26" stroke-linecap="round"/>
+  <path d="M 214 372 L 256 414 L 298 372" fill="none" stroke="url(#accent)" stroke-width="26"
+        stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
