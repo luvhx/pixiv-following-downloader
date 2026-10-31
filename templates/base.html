@@ -301,7 +301,6 @@ a.chip:hover { color: var(--text); text-decoration: none; border-color: var(--ac
 .batchbar .spacer { flex: 1; }
 .select-box { position: absolute; top: 7px; right: 7px; z-index: 2; width: 20px; height: 20px; }
 .artist .select-box { top: 8px; right: 8px; }
-.artist-main { padding-right: 22px; }
 
 /* 分页 */
 .pagination { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 18px; }
@@ -332,15 +331,27 @@ a.chip:hover { color: var(--text); text-decoration: none; border-color: var(--ac
   border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
   border-radius: 999px; color: var(--warn); font-size: 10px; font-weight: 500;
 }
-.artist-main { display: flex; gap: 10px; align-items: center; color: var(--text); }
+.artist-main { display: flex; gap: 10px; align-items: center; color: var(--text); min-width: 0; }
 .artist-main:hover { text-decoration: none; }
 .artist .artist-main > img, .artist .artist-main > .avatar {
   width: 46px; height: 46px; border-radius: 50%; object-fit: cover;
   background: var(--panel-2); flex: none;
 }
-.artist .info { min-width: 0; }
-.artist .name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.artist .sub { color: var(--muted); font-size: 12px; }
+.artist .info { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
+.artist .name {
+  display: flex; align-items: center; gap: 4px; min-width: 0;
+  font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden;
+}
+.artist .name-text {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.artist .name .badge-off { margin-left: 0; flex: none; }
+.artist .sub {
+  color: var(--muted); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.artist.has-select .artist-main { padding-right: 34px; }
 .artist-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .artist-actions form { margin: 0; }
 .artist-previews { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }

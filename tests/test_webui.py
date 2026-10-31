@@ -735,6 +735,18 @@ class WebUITest(unittest.TestCase):
         self.assertEqual(self.db.plan_ids(), {999})
         self.assertIn("Artist 999", resp.data.decode())
 
+    def test_long_artist_name_keeps_badges_and_checkbox_markup(self):
+        long_name = "很长的画师昵称" * 12
+        self.db.replace_following([{
+            "user_id": 55, "user_name": long_name, "is_private": 1,
+        }])
+        self.storage_patch()
+        html = self.make_client().get("/browse").data.decode()
+        self.assertIn('class="name-text"', html)
+        self.assertIn("隐藏关注", html)
+        self.assertIn("has-select", html)
+        self.assertIn(f'title="{long_name}"', html)
+
     def test_privacy_filter(self):
         self.db.replace_following([
             {"user_id": 55, "user_name": "PublicArtist", "is_private": 0},

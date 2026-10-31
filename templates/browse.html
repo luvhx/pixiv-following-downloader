@@ -98,7 +98,8 @@
 
 <div class="artists {{ 'with-preview' if preview }}" id="artistGrid">
   {% for a in artists %}
-  <div class="artist {{ 'ignored' if a.ignored }}" data-name="{{ (a.artist_name or '')|lower }}">
+  <div class="artist {{ 'ignored' if a.ignored }} {{ 'has-select' if view == 'following' and not a.in_plan }}"
+       data-name="{{ (a.artist_name or '')|lower }}">
     {% if view == 'following' and not a.in_plan %}
     <input type="checkbox" class="select-box plan-select" form="plan-batch-form"
            name="artist_id" value="{{ a.artist_id }}"
@@ -113,7 +114,7 @@
       {% endif %}
       <span class="info">
         <span class="name">
-          {{ a.artist_name or a.artist_id }}
+          <span class="name-text" title="{{ a.artist_name or a.artist_id }}">{{ a.artist_name or a.artist_id }}</span>
           {% if a.is_private %}<span class="badge-off">隐藏关注</span>{% endif %}
           {% if a.ignored %}<span class="badge-off">已暂停</span>{% endif %}
         </span>
