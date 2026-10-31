@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ artist.artist_name }} - 作品浏览{% endblock %}
+{% block title %}{{ artist.artist_name }} · 关注画师 · Pixiv Following Downloader{% endblock %}
 {% block content %}
 <div class="page-head">
   <h1 style="display:flex;align-items:center;gap:10px">
@@ -24,7 +24,7 @@
 
 <p class="small muted">
   ID {{ artist.artist_id }} · 已下载 {{ downloaded_count }} 个作品
-  · <a href="{{ url_for('downloaded', artist=artist.artist_id) }}">查看已下载</a>
+  · <a href="{{ url_for('downloaded', artist=artist.artist_id) }}">查看本地画廊</a>
 </p>
 
 <div class="filterbar">

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}下载规则 - Pixiv Following Downloader{% endblock %}
+{% block title %}下载规则 · Pixiv Following Downloader{% endblock %}
 {% block content %}
 {% macro rule_field(f) %}
 <div class="field">
@@ -34,13 +34,24 @@
 <form method="post" action="{{ url_for('rules_page') }}">
   <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
   <fieldset>
-    <legend>下载范围</legend>
+    <legend>下载内容</legend>
     <div class="form-grid">
       {% for f in download_fields %}{{ rule_field(f) }}{% endfor %}
     </div>
   </fieldset>
   <fieldset>
-    <legend>调度</legend>
+    <legend>文件命名</legend>
+    <p class="small muted" style="margin:-4px 0 12px">
+      目录和文件名模板，留空使用默认命名。占位符：
+      {artist} {artist_id} {date} {id} {title} {page} {pages} {type} {ext}；
+      目录模板支持 / 分级。
+    </p>
+    <div class="form-grid">
+      {% for f in naming_fields %}{{ rule_field(f) }}{% endfor %}
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>运行调度</legend>
     <p class="small muted" style="margin:-4px 0 12px">
       调度保存在数据库，保存后立即重新计算下次运行时间；
       请求节流参数在「配置」页。
@@ -131,30 +142,33 @@
 </div>
 
 <div class="panel">
-  <h2>增量抓取</h2>
-  <p class="small muted">
-    每轮只抓取画师水位之后的新作品。修改规则后如果想重新检查旧作品，
-    可以重置水位，下一轮会从头扫描（已下载的作品会自动跳过）。
-  </p>
-  <form method="post" action="{{ url_for('rules_reset_watermarks') }}"
-        onsubmit="return confirm('重置所有画师的抓取水位？下一轮会从头扫描，耗时较长。');">
-    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-    <button class="btn" type="submit">重置抓取水位</button>
-  </form>
-</div>
-
-
-<div class="panel">
-  <h2>维护</h2>
-  <p class="small muted">
-    扫描数据库里的文件路径：文件全部丢失的作品会删除记录；部分丢失的会修正文件列表。
-    使用 WebDAV 时每张图都要发一次 HEAD，作品多时会比较慢。
-  </p>
-  <form method="post" action="{{ url_for('maintenance_cleanup') }}"
-        onsubmit="return confirm('扫描并清理失效记录？该操作只删除文件已不存在的记录。');">
-    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
-    <button class="btn" type="submit">扫描并清理失效记录</button>
-  </form>
+  <h2>抓取与维护</h2>
+  <div class="form-grid">
+    <div>
+      <div class="name" style="font-weight:600;font-size:13px">增量抓取</div>
+      <p class="small muted">
+        每轮只抓取画师水位之后的新作品；想重新检查旧作品时重置水位，
+        下一轮会从头扫描（已下载的会自动跳过）。
+      </p>
+      <form method="post" action="{{ url_for('rules_reset_watermarks') }}"
+            onsubmit="return confirm('重置所有画师的抓取水位？下一轮会从头扫描，耗时较长。');">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <button class="btn" type="submit">重置抓取水位</button>
+      </form>
+    </div>
+    <div>
+      <div class="name" style="font-weight:600;font-size:13px">清理失效记录</div>
+      <p class="small muted">
+        扫描数据库里的文件路径：文件全部丢失的作品删除记录，部分丢失的修正文件列表。
+        使用 WebDAV 时每张图都要发一次 HEAD，作品多时会比较慢。
+      </p>
+      <form method="post" action="{{ url_for('maintenance_cleanup') }}"
+            onsubmit="return confirm('扫描并清理失效记录？该操作只删除文件已不存在的记录。');">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <button class="btn" type="submit">扫描并清理</button>
+      </form>
+    </div>
+  </div>
 </div>
 {% endblock %}
 

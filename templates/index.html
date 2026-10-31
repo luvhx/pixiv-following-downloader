@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}仪表盘 - Pixiv Following Downloader{% endblock %}
+{% block title %}概览 · Pixiv Following Downloader{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>仪表盘</h1>
+  <h1>概览</h1>
   <div class="spacer"></div>
   <div class="btn-row">
     <form method="post" action="{{ url_for('run_now') }}">
@@ -111,7 +111,7 @@
 {% endif %}
 
 <div class="panel">
-  <h2>下载规则</h2>
+  <h2>规则摘要</h2>
   <p class="small muted" style="margin-bottom:10px">
     调度
     {% if rules.run_cron %}cron {{ rules.run_cron }}
@@ -161,7 +161,7 @@
 {% else %}
 <div class="panel empty">
   <div class="big">还没有下载任何作品</div>
-  <p class="small">先去<a href="{{ url_for('browse') }}">作品浏览</a>看看关注画师，或者点击「立即运行」。</p>
+  <p class="small">先去<a href="{{ url_for('browse') }}">关注画师</a>看看，或者点击「立即运行」。</p>
 </div>
 {% endif %}
 

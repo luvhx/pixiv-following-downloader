@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}已下载 - Pixiv Following Downloader{% endblock %}
+{% block title %}本地画廊 · Pixiv Following Downloader{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>已下载</h1>
+  <h1>本地画廊</h1>
   <div class="spacer"></div>
   <span class="muted small">
     {% if favorites_only %}共 {{ total }} 个收藏{% else %}共 {{ total }} 个作品{% endif %}
@@ -151,7 +151,7 @@
     {% if q or tag or artist_id or favorites_only %}
     试试<a href="{{ url_for('downloaded') }}">清除筛选</a>。
     {% else %}
-    去<a href="{{ url_for('browse') }}">作品浏览</a>逛逛，或者等待下一轮自动下载。
+    去<a href="{{ url_for('browse') }}">关注画师</a>逛逛，或者等待下一轮自动下载。
     {% endif %}
   </p>
 </div>

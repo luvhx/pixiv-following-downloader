@@ -96,6 +96,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 }
 .topbar nav a:hover { background: var(--panel-2); color: var(--text); text-decoration: none; }
 .topbar nav a.active { background: var(--panel-2); color: var(--text); font-weight: 600; }
+.nav-sep { flex: none; width: 1px; height: 18px; margin: 0 4px; background: var(--border); align-self: center; }
 .topbar-actions { display: flex; align-items: center; gap: 6px; }
 
 /* 布局 */
@@ -378,16 +379,20 @@ pre.log {
 </style>
 </head>
 <body>
+{% if not hide_nav %}
 <header class="topbar">
   <a class="brand" href="{{ url_for('index') }}">
     <img src="{{ url_for('static', filename='logo.svg') }}" alt="" aria-hidden="true">
     <span>Pixiv Following Downloader</span>
   </a>
   <nav>
-    <a href="{{ url_for('index') }}" class="{{ 'active' if active == 'index' }}">仪表盘</a>
-    <a href="{{ url_for('browse') }}" class="{{ 'active' if active == 'browse' }}">作品浏览</a>
-    <a href="{{ url_for('downloaded') }}" class="{{ 'active' if active == 'downloaded' }}">已下载</a>
+    <a href="{{ url_for('index') }}" class="{{ 'active' if active == 'index' }}">概览</a>
+    <span class="nav-sep" aria-hidden="true"></span>
+    <a href="{{ url_for('browse') }}" class="{{ 'active' if active == 'browse' }}">关注画师</a>
+    <a href="{{ url_for('downloaded') }}" class="{{ 'active' if active == 'downloaded' }}">本地画廊</a>
+    <span class="nav-sep" aria-hidden="true"></span>
     <a href="{{ url_for('rules_page') }}" class="{{ 'active' if active == 'rules' }}">下载规则</a>
+    <span class="nav-sep" aria-hidden="true"></span>
     <a href="{{ url_for('config_page') }}" class="{{ 'active' if active == 'config' }}">配置</a>
     <a href="{{ url_for('logs') }}" class="{{ 'active' if active == 'logs' }}">日志</a>
   </nav>
@@ -401,6 +406,7 @@ pre.log {
     {% endif %}
   </div>
 </header>
+{% endif %}
 <main class="wrap">
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, message in messages %}
@@ -409,7 +415,9 @@ pre.log {
   {% endwith %}
   {% block content %}{% endblock %}
 </main>
+{% if not hide_nav %}
 <footer>Pixiv Following Downloader</footer>
+{% endif %}
 <script>
 (function () {
   var btn = document.getElementById("themeBtn");

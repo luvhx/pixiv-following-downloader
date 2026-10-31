@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}配置 - Pixiv Following Downloader{% endblock %}
+{% block title %}配置 · Pixiv Following Downloader{% endblock %}
 {% block content %}
 {% macro field(f) %}
 <div class="field">
@@ -26,9 +26,9 @@
 {% endmacro %}
 
 <div class="page-head">
-  <h1>系统配置</h1>
+  <h1>配置</h1>
   <div class="spacer"></div>
-  <span class="muted small">保存在 .env；下载规则请到「下载规则」页</span>
+  <span class="muted small">部署与系统参数；下载规则请到「下载规则」页</span>
 </div>
 
 <form method="post" action="{{ url_for('config_page') }}">

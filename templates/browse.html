@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}作品浏览 - Pixiv Following Downloader{% endblock %}
+{% block title %}关注画师 · Pixiv Following Downloader{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>作品浏览</h1>
+  <h1>关注画师</h1>
   <div class="spacer"></div>
   <div class="btn-row">
     <input type="search" id="artistFilter" placeholder="筛选画师名" style="width:180px">
@@ -26,7 +26,6 @@
 <p class="small muted">
   目标用户 ID：{{ target_user_id or '未设置' }}
   {% if updated_at %} · 列表更新时间：{{ updated_at }}{% endif %}
-  {% if preview %} · 每个画师展示 3 个代表作（按收藏数排序，来自关注列表接口）{% endif %}
 </p>
 
 {% if not auth_ok %}

@@ -251,7 +251,9 @@ class WebUITest(unittest.TestCase):
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/setup", resp.headers["Location"])
         self.assertEqual(client.get("/healthz").status_code, 200)
-        self.assertEqual(client.get("/setup").status_code, 200)
+        setup_page = client.get("/setup")
+        self.assertEqual(setup_page.status_code, 200)
+        self.assertNotIn(b'class="topbar"', setup_page.data)
 
     # ---------- 登录 ----------
     def test_login_required_and_success(self):
@@ -262,7 +264,9 @@ class WebUITest(unittest.TestCase):
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/login", resp.headers["Location"])
 
-        client.get("/login")
+        login_page = client.get("/login").data.decode()
+        self.assertNotIn('class="topbar"', login_page)
+        self.assertIn("<title>登录 · Pixiv Following Downloader</title>", login_page)
         token = self.csrf(client)
         resp = client.post("/login", data={
             "username": "admin", "password": "secret", "_csrf": token,
@@ -552,6 +556,7 @@ class WebUITest(unittest.TestCase):
 
         on = client.get("/browse?preview=1").data.decode()
         self.assertIn("预览作品", on)
+        self.assertNotIn("每个画师展示", on)
         self.assertIn("关闭代表作预览", on)
         self.assertIn("https://i.pximg.net/p1.jpg", on)
 
@@ -624,6 +629,15 @@ class WebUITest(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIsNone(self.db.get(1))
         self.assertIn("清理完成", resp.data.decode())
+
+    def test_nav_labels_and_page_title(self):
+        html = self.make_client().get("/").data.decode()
+        self.assertIn("<title>概览 · Pixiv Following Downloader</title>", html)
+        self.assertIn(">概览<", html)
+        self.assertIn(">关注画师<", html)
+        self.assertIn(">本地画廊<", html)
+        self.assertIn(">下载规则<", html)
+        self.assertIn('class="nav-sep"', html)
 
     def test_dashboard_progress_render(self):
         sched = Scheduler(None, self.db, self.rules)

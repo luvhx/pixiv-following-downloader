@@ -255,11 +255,11 @@ def install_log_capture():
 
 # ---------- 系统配置字段（.env）----------
 CONFIG_FIELDS = [
-    ("PIXIV_REFRESH_TOKEN", "Refresh Token", "password", "Pixiv",
+    ("PIXIV_REFRESH_TOKEN", "Refresh Token", "password", "Pixiv 账号",
      "必填。修改保存后会立即使用新 token 重新认证。", None),
-    ("TARGET_USER_ID", "目标用户 ID", "text", "Pixiv",
+    ("TARGET_USER_ID", "目标用户 ID", "text", "Pixiv 账号",
      "抓取其关注列表的 Pixiv 用户 ID（纯数字）。", None),
-    ("TOKEN_REFRESH_INTERVAL", "Token 刷新间隔（分钟）", "int", "Pixiv",
+    ("TOKEN_REFRESH_INTERVAL", "Token 刷新间隔（分钟）", "int", "Pixiv 账号",
      "后台刷新 access_token 的间隔，1-59。", None),
 
     ("STORAGE_BACKEND", "存储后端", "select", "存储",
@@ -280,10 +280,10 @@ CONFIG_FIELDS = [
     ("WEBDAV_VERIFY_TIMEOUT", "WebDAV 写入确认超时（秒）", "int", "存储",
      "上传后等待文件可见的最长时间；0 表示不校验。", None),
 
-    ("IMAGE_DELIVERY", "原图获取方式", "select", "图片",
+    ("IMAGE_DELIVERY", "原图获取方式", "select", "图片获取",
      "proxy=由 WebUI 转发；redirect=302 到 WebDAV 直链（浏览器需能直接访问）。",
      [("proxy", "proxy（转发）"), ("redirect", "redirect（302）")]),
-    ("WEBDAV_PUBLIC_URL", "WebDAV 浏览器直链", "text", "图片",
+    ("WEBDAV_PUBLIC_URL", "WebDAV 浏览器直链", "text", "图片获取",
      "redirect 模式使用；留空则用 WebDAV 地址。", None),
 
     ("REQUEST_DELAY", "API 请求间隔（秒）", "float", "请求节流",
@@ -300,14 +300,14 @@ CONFIG_FIELDS = [
      "每处理 N 位画师强制冷却一次；0 表示关闭。", None),
     ("ARTIST_COOLDOWN_SECONDS", "冷却时长（秒）", "int", "请求节流", "", None),
 
-    ("HTTPS_PROXY", "HTTPS 代理", "text", "网络",
+    ("HTTPS_PROXY", "HTTPS 代理", "text", "网络与代理",
      "例如 http://127.0.0.1:7890。修改后立即生效。", None),
 
-    ("WEBUI_HOST", "监听地址", "text", "WebUI", "修改后需重启。", None),
-    ("WEBUI_PORT", "端口", "int", "WebUI", "修改后需重启。", None),
-    ("WEBUI_USERNAME", "登录用户名", "text", "WebUI",
+    ("WEBUI_HOST", "监听地址", "text", "Web 界面", "修改后需重启。", None),
+    ("WEBUI_PORT", "端口", "int", "Web 界面", "修改后需重启。", None),
+    ("WEBUI_USERNAME", "登录用户名", "text", "Web 界面",
      "留空则无需登录；建议公网部署时设置。", None),
-    ("WEBUI_PASSWORD", "登录密码", "password", "WebUI",
+    ("WEBUI_PASSWORD", "登录密码", "password", "Web 界面",
      "与用户名配合使用，修改后立即生效。", None),
 ]
 
@@ -528,7 +528,7 @@ def create_app(api, db, rules, scheduler) -> Flask:
 
     @app.context_processor
     def _inject_auth_flag():
-        return {"auth_enabled": bool(config.WEBUI_USERNAME)}
+        return {"auth_enabled": bool(config.WEBUI_USERNAME), "hide_nav": False}
 
     def _csrf_token() -> str:
         token = session.get("_csrf_token")
@@ -610,7 +610,7 @@ def create_app(api, db, rules, scheduler) -> Flask:
                 "error": (errors or {}).get(key, ""),
                 "required": key in ("PIXIV_REFRESH_TOKEN", "TARGET_USER_ID"),
             })
-        return render_template("setup.html", fields=fields, active=None)
+        return render_template("setup.html", fields=fields, active=None, hide_nav=True)
 
     # ---------- 登录 ----------
     ALLOWED_WITHOUT_LOGIN = {"/login", "/logout", "/favicon.ico", "/healthz"}
@@ -659,7 +659,7 @@ def create_app(api, db, rules, scheduler) -> Flask:
         if retry_after:
             logger.warning(f"登录失败次数过多，暂时封禁 {ip}（剩余 {retry_after}s）")
             return render_template(
-                "login.html", next=next_url, active=None,
+                "login.html", next=next_url, active=None, hide_nav=True,
                 error=f"尝试次数过多，请 {retry_after // 60 + 1} 分钟后再试",
             ), 429
 
@@ -679,7 +679,7 @@ def create_app(api, db, rules, scheduler) -> Flask:
             _login_failed(ip)
             logger.warning("WebUI 登录失败：用户名或密码错误")
             flash("用户名或密码错误", "error")
-        return render_template("login.html", next=next_url, error=None, active=None)
+        return render_template("login.html", next=next_url, error=None, active=None, hide_nav=True)
 
     @app.post("/logout")
     def logout():
@@ -766,11 +766,17 @@ def create_app(api, db, rules, scheduler) -> Flask:
                 "options": options, "value": values.get(key, ""),
                 "error": errors.get(key, ""),
             })
+        download_keys = {
+            "download_kind", "illust_type", "first_page_only", "ugoira_format",
+            "max_per_artist", "min_bookmark_count",
+        }
+        naming_keys = {"folder_template", "filename_template"}
         schedule_keys = {"run_cron", "run_cron_immediate", "poll_interval"}
         tag_rules = rules.tags()
         return render_template(
             "rules.html", active="rules",
-            download_fields=[f for f in fields if f["key"] not in schedule_keys],
+            download_fields=[f for f in fields if f["key"] in download_keys],
+            naming_fields=[f for f in fields if f["key"] in naming_keys],
             schedule_fields=[f for f in fields if f["key"] in schedule_keys],
             include_tags=[t for t in tag_rules if t["mode"] == "include"],
             exclude_tags=[t for t in tag_rules if t["mode"] == "exclude"],
