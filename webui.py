@@ -583,7 +583,7 @@ def create_app(api, db, rules, scheduler, download_api=None) -> Flask:
 
     @app.get("/favicon.ico")
     def favicon():
-        return send_from_directory(app.static_folder, "favicon.ico", max_age=86400)
+        return send_from_directory(app.static_folder, "favicon.ico", max_age=0)
 
     # ---------- 首次配置向导 ----------
     @app.before_request
@@ -1022,6 +1022,52 @@ def create_app(api, db, rules, scheduler, download_api=None) -> Flask:
             )
             flash("已加入抓取计划", "ok")
         return redirect(_safe_next(request.form.get("next"), default))
+
+    @app.post("/plan/batch")
+    def plan_batch():
+        if not db:
+            flash("数据库不可用", "error")
+            return redirect(url_for("browse", view="following"))
+        ids = []
+        for raw in request.form.getlist("artist_id"):
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if value not in ids:
+                ids.append(value)
+        if not ids:
+            flash("没有选中任何画师", "warn")
+            return redirect(_safe_next(
+                request.form.get("next"), url_for("browse", view="following")
+            ))
+        if len(ids) > 500:
+            flash("一次最多添加 500 位画师", "warn")
+            return redirect(_safe_next(
+                request.form.get("next"), url_for("browse", view="following")
+            ))
+
+        following = {a["artist_id"]: a for a in db.following()}
+        existing = db.plan_ids()
+        added = skipped = 0
+        for artist_id in ids:
+            artist = following.get(artist_id)
+            if artist is None or artist_id in existing:
+                skipped += 1
+                continue
+            db.add_to_plan(
+                artist_id,
+                artist.get("artist_name") or "",
+                artist.get("avatar_url"),
+            )
+            added += 1
+        message = f"已把 {added} 位画师加入抓取计划"
+        if skipped:
+            message += f"，跳过 {skipped} 位（已在计划中或不在关注列表）"
+        flash(message, "ok" if added else "warn")
+        return redirect(_safe_next(
+            request.form.get("next"), url_for("browse", view="following")
+        ))
 
     @app.post("/plan/add")
     def plan_add():

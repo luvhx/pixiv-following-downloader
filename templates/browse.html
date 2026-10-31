@@ -79,9 +79,31 @@
 {% endif %}
 
 {% if artists %}
+{% set selectable = artists|rejectattr('in_plan')|list %}
+{% if view == 'following' and selectable %}
+<form id="plan-batch-form" method="post" action="{{ url_for('plan_batch') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+  <input type="hidden" name="next" value="{{ request.full_path }}">
+</form>
+<div class="batchbar">
+  <label class="small" style="display:flex;align-items:center;gap:6px">
+    <input type="checkbox" id="plan-select-all"> 全选
+  </label>
+  <span class="muted small" id="plan-selected-count">未选择</span>
+  <div class="spacer"></div>
+  <button type="submit" form="plan-batch-form" class="btn mini primary"
+          id="plan-batch-add" disabled>批量加入计划</button>
+</div>
+{% endif %}
+
 <div class="artists {{ 'with-preview' if preview }}" id="artistGrid">
   {% for a in artists %}
   <div class="artist {{ 'ignored' if a.ignored }}" data-name="{{ (a.artist_name or '')|lower }}">
+    {% if view == 'following' and not a.in_plan %}
+    <input type="checkbox" class="select-box plan-select" form="plan-batch-form"
+           name="artist_id" value="{{ a.artist_id }}"
+           aria-label="选择画师 {{ a.artist_name or a.artist_id }}">
+    {% endif %}
     <a class="artist-main" href="{{ url_for('browse_artist', artist_id=a.artist_id) }}">
       {% if a.avatar_url %}
       <img src="{{ url_for('thumb_proxy', u=a.avatar_url) }}" alt="" loading="lazy"
@@ -174,13 +196,33 @@
 (function () {
   var input = document.getElementById("artistFilter");
   var grid = document.getElementById("artistGrid");
-  if (!input || !grid) return;
-  input.addEventListener("input", function () {
-    var q = input.value.trim().toLowerCase();
-    Array.prototype.forEach.call(grid.children, function (el) {
-      el.style.display = (!q || (el.dataset.name || "").indexOf(q) >= 0) ? "" : "none";
+  if (input && grid) {
+    input.addEventListener("input", function () {
+      var q = input.value.trim().toLowerCase();
+      Array.prototype.forEach.call(grid.children, function (el) {
+        el.style.display = (!q || (el.dataset.name || "").indexOf(q) >= 0) ? "" : "none";
+      });
     });
+  }
+
+  var boxes = Array.prototype.slice.call(document.querySelectorAll(".plan-select"));
+  var all = document.getElementById("plan-select-all");
+  var counter = document.getElementById("plan-selected-count");
+  var submit = document.getElementById("plan-batch-add");
+  if (!boxes.length || !all || !counter || !submit) return;
+  function refresh() {
+    var n = boxes.filter(function (b) { return b.checked; }).length;
+    counter.textContent = n ? ("已选 " + n + " 位") : "未选择";
+    submit.disabled = n === 0;
+    all.checked = n > 0 && n === boxes.length;
+    all.indeterminate = n > 0 && n < boxes.length;
+  }
+  all.addEventListener("change", function () {
+    boxes.forEach(function (b) { b.checked = all.checked; });
+    refresh();
   });
+  boxes.forEach(function (b) { b.addEventListener("change", refresh); });
+  refresh();
 })();
 </script>
 {% endblock %}

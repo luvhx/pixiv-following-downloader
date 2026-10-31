@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Pixiv Following Downloader{% endblock %}</title>
-<link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" sizes="any">
-<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
-<link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
-<link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
-<meta name="theme-color" content="#4f8cff">
+<link rel="icon" href="{{ url_for('static', filename='favicon.ico', v='3') }}" sizes="any">
+<link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg', v='3') }}">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png', v='3') }}">
+<link rel="manifest" href="{{ url_for('static', filename='site.webmanifest', v='3') }}">
+<meta name="theme-color" content="#0096FA">
 <script>
 /* 首屏前应用主题，避免闪烁 */
 (function () {
@@ -292,6 +292,7 @@ a.chip:hover { color: var(--text); text-decoration: none; border-color: var(--ac
 .work .ops form .btn { flex: 1; }
 
 /* 批量操作 */
+.artist { position: relative; }
 .batchbar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   background: var(--panel); border: 1px solid var(--border);
@@ -299,6 +300,8 @@ a.chip:hover { color: var(--text); text-decoration: none; border-color: var(--ac
 }
 .batchbar .spacer { flex: 1; }
 .select-box { position: absolute; top: 7px; right: 7px; z-index: 2; width: 20px; height: 20px; }
+.artist .select-box { top: 8px; right: 8px; }
+.artist-main { padding-right: 22px; }
 
 /* 分页 */
 .pagination { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 18px; }
@@ -442,7 +445,7 @@ pre.log {
 {% if not hide_nav %}
 <header class="topbar">
   <a class="brand" href="{{ url_for('index') }}">
-    <img src="{{ url_for('static', filename='logo.svg') }}" alt="" aria-hidden="true">
+    <img src="{{ url_for('static', filename='logo.svg', v='3') }}" alt="" aria-hidden="true">
     <span>Pixiv Following Downloader</span>
   </a>
   <nav>

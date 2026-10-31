@@ -697,6 +697,29 @@ class WebUITest(unittest.TestCase):
         })
         self.assertEqual(self.db.plan_ids(), set())
 
+    def test_plan_batch_add(self):
+        self.db.replace_following([
+            {"user_id": 55, "user_name": "Artist"},
+            {"user_id": 66, "user_name": "Other"},
+            {"user_id": 77, "user_name": "Already"},
+        ])
+        self.db.add_to_plan(77, "Already")
+        self.storage_patch()
+        client = self.make_client()
+        html = client.get("/browse").data.decode()
+        self.assertIn("plan-select", html)
+        self.assertIn("批量加入计划", html)
+        token = self.csrf(client)
+
+        resp = client.post("/plan/batch", data={
+            "artist_id": ["55", "66", "77"],
+            "_csrf": token,
+            "next": "/browse",
+        }, follow_redirects=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.db.plan_ids(), {55, 66, 77})
+        self.assertIn("已把 2 位画师加入抓取计划", resp.data.decode())
+
     def test_plan_add_non_followed(self):
         api = FakeAPI()
         with mock.patch.object(webui, "DownloadQueue", return_value=StubQueue()):
