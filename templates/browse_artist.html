@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}{{ artist.artist_name }} · 关注画师 · Pixiv Following Downloader{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1 style="display:flex;align-items:center;gap:10px">
+    {% if artist.avatar_url %}
+    <img src="{{ url_for('thumb_proxy', u=artist.avatar_url) }}" alt="" width="36" height="36"
+         style="border-radius:50%;object-fit:cover" onerror="this.style.visibility='hidden'">
+    {% endif %}
+    {{ artist.artist_name }}
+    {% if artist.is_private %}<span class="badge-off">隐藏关注</span>{% endif %}
+    {% if in_plan %}<span class="badge-off">计划中</span>{% endif %}
+  </h1>
+  <div class="spacer"></div>
+  <div class="btn-row">
+    <form method="post" action="{{ url_for('plan_toggle', artist_id=artist.artist_id) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ request.full_path }}">
+      <input type="hidden" name="action" value="{{ 'remove' if in_plan else 'add' }}">
+      <button class="btn {{ '' if in_plan else 'primary' }}" type="submit">
+        {{ '移出抓取计划' if in_plan else '加入抓取计划' }}
+      </button>
+    </form>
+    {% if in_following %}
+    <form method="post" action="{{ url_for('browse_ignore', artist_id=artist.artist_id) }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ request.full_path }}">
+      <input type="hidden" name="ignored" value="{{ 0 if artist.ignored else 1 }}">
+      <button class="btn" type="submit">{{ '恢复同步' if artist.ignored else '暂停同步' }}</button>
+    </form>
+    {% endif %}
+    <a class="btn" href="{{ url_for('browse') }}">返回画师列表</a>
+    <a class="btn" href="https://www.pixiv.net/users/{{ artist.artist_id }}" target="_blank" rel="noopener">Pixiv 主页</a>
+  </div>
+</div>
+
+<p class="small muted">
+  ID {{ artist.artist_id }} · 已下载 {{ downloaded_count }} 个作品
+  · <a href="{{ url_for('downloaded', artist=artist.artist_id) }}">查看本地画廊</a>
+</p>
+
+<div class="filterbar">
+  <a class="btn mini {{ 'primary' if kind == 'illust' }}"
+     href="{{ url_for('browse_artist', artist_id=artist.artist_id, type='illust') }}">插画</a>
+  <a class="btn mini {{ 'primary' if kind == 'manga' }}"
+     href="{{ url_for('browse_artist', artist_id=artist.artist_id, type='manga') }}">漫画</a>
+  <span class="muted small">第 {{ page }} 页</span>
+</div>
+
+{% if error %}
+<div class="flash flash-error">{{ error }}</div>
+{% endif %}
+
+{% if works %}
+<form id="batch-download-form" method="post" action="{{ url_for('browse_download_batch') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+  <input type="hidden" name="next" value="{{ request.full_path }}">
+</form>
+
+<div class="batchbar">
+  <label class="small" style="display:flex;align-items:center;gap:6px">
+    <input type="checkbox" id="select-all"> 全选本页
+  </label>
+  <span class="muted small" id="selected-count">未选择</span>
+  <div class="spacer"></div>
+  <button type="submit" form="batch-download-form" class="btn mini primary"
+          id="batch-download" disabled>下载选中</button>
+</div>
+
+<div class="works">
+  {% for w in works %}
+  <article class="work">
+    {% if not w.downloaded and w.illust_id not in pending %}
+    <input type="checkbox" class="select-box" form="batch-download-form" name="illust_id"
+           value="{{ w.illust_id }}" aria-label="选择《{{ w.title }}》">
+    {% endif %}
+    <a class="thumb" href="https://www.pixiv.net/artworks/{{ w.illust_id }}" target="_blank" rel="noopener">
+      {% if w.thumb_url %}
+      <img src="{{ url_for('thumb_proxy', u=w.thumb_url) }}" alt="{{ w.title }}"
+           loading="lazy" decoding="async" onerror="this.style.display='none';this.parentNode.classList.add('thumb-missing')">
+      {% else %}
+      <span class="placeholder">无预览</span>
+      {% endif %}
+      {% if w.downloaded %}
+      <span class="badge done">已下载</span>
+      {% elif w.illust_id in pending %}
+      <span class="badge">排队中</span>
+      {% endif %}
+      {% if w.page_count > 1 %}<span class="count">{{ w.page_count }}p</span>{% endif %}
+    </a>
+    <div class="body">
+      <a class="title" href="https://www.pixiv.net/artworks/{{ w.illust_id }}" target="_blank" rel="noopener">{{ w.title }}</a>
+      <div class="meta">
+        <span>{{ w.bookmarks }} 收藏</span>
+        <span>{{ w.type }}</span>
+      </div>
+      {% if w.tags %}
+      <div class="chips" style="margin-top:6px">
+        {% for t in w.tags[:6] %}
+        <span class="chip tag-chip">
+          <span>{{ t }}</span>
+          <form method="post" action="{{ url_for('favorite_tag') }}">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <input type="hidden" name="tag" value="{{ t }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <button class="chip-act {{ 'is-fav' if t|lower in favorite_tag_norms }}"
+                    type="submit" title="{{ '取消收藏 tag' if t|lower in favorite_tag_norms else '收藏 tag' }}"
+                    aria-label="{{ '取消收藏' if t|lower in favorite_tag_norms else '收藏' }} tag {{ t }}">{{ '★' if t|lower in favorite_tag_norms else '☆' }}</button>
+          </form>
+          {% if t|lower in excluded_tags %}
+          <span class="chip-act disabled" title="已在排除规则中" aria-label="{{ t }} 已在排除规则中">⊘</span>
+          {% else %}
+          <form method="post" action="{{ url_for('rules_tag_add') }}"
+                onsubmit="return confirm('把这个 tag 加入排除规则？之后不会再下载包含该 tag 的作品。');">
+            <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+            <input type="hidden" name="tag" value="{{ t }}">
+            <input type="hidden" name="mode" value="exclude">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <button class="chip-act" type="submit" title="加入排除规则"
+                    aria-label="把 {{ t }} 加入排除规则">⊘</button>
+          </form>
+          {% endif %}
+        </span>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <div class="ops">
+        {% if w.downloaded %}
+        <a class="btn mini" href="{{ url_for('downloaded_detail', illust_id=w.illust_id) }}">查看</a>
+        {% elif w.illust_id in pending %}
+        <button class="btn mini" disabled>排队中</button>
+        {% else %}
+        <form method="post" action="{{ url_for('browse_download', illust_id=w.illust_id) }}">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <input type="hidden" name="next" value="{{ request.full_path }}">
+          <button class="btn mini primary" type="submit">下载</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+
+<div class="pagination">
+  {% if page > 1 %}
+  <a href="{{ url_for('browse_artist', artist_id=artist.artist_id, type=kind, page=page-1) }}">上一页</a>
+  {% endif %}
+  <span class="cur">{{ page }}</span>
+  {% if has_next %}
+  <a href="{{ url_for('browse_artist', artist_id=artist.artist_id, type=kind, page=page+1) }}">下一页</a>
+  {% endif %}
+</div>
+{% elif not error %}
+<div class="panel empty">
+  <div class="big">没有更多作品</div>
+  <p class="small">当前页为空，可能已经翻到末尾。</p>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var boxes = Array.prototype.slice.call(document.querySelectorAll(".select-box"));
+  var all = document.getElementById("select-all");
+  var counter = document.getElementById("selected-count");
+  var submit = document.getElementById("batch-download");
+  if (!all || !counter || !submit) return;
+  function refresh() {
+    var n = boxes.filter(function (b) { return b.checked; }).length;
+    counter.textContent = n ? ("已选 " + n + " 个") : "未选择";
+    submit.disabled = n === 0;
+    all.checked = n > 0 && n === boxes.length;
+    all.indeterminate = n > 0 && n < boxes.length;
+  }
+  all.addEventListener("change", function () {
+    boxes.forEach(function (b) { b.checked = all.checked; });
+    refresh();
+  });
+  boxes.forEach(function (b) { b.addEventListener("change", refresh); });
+  refresh();
+})();
+</script>
+{% endblock %}

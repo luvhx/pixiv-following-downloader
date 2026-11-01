@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}{{ row.title or '作品详情' }} · 本地画廊 · Pixiv Following Downloader{% endblock %}
+{% block content %}
+<p class="small"><a href="{{ back_url }}">← 返回本地画廊</a></p>
+
+<div class="detail">
+  <div class="preview">
+    {% if files %}
+    {% set current_ext = files[page - 1].rsplit('.', 1)[-1]|lower %}
+    {% if current_ext == 'zip' %}
+    <div class="empty">动图已保存为 zip（原始帧），点击下方「原图」下载</div>
+    {% elif current_ext in ('webm', 'mp4', 'mov') %}
+    <video src="{{ url_for('work_image', illust_id=row.illust_id, p=page) }}"
+           controls autoplay loop muted playsinline></video>
+    {% else %}
+    <a href="{{ url_for('work_image', illust_id=row.illust_id, p=page) }}" target="_blank" rel="noopener">
+      <img src="{{ url_for('work_image', illust_id=row.illust_id, p=page) }}" alt="{{ row.title }}">
+    </a>
+    {% endif %}
+    {% else %}
+    <div class="empty">图片文件缺失</div>
+    {% endif %}
+    {% if page_count > 1 %}
+    <div class="pager">
+      {% if prev_url %}<a class="btn mini" href="{{ prev_url }}" title="上一页">‹</a>{% endif %}
+      {% for n in range(1, page_count + 1) %}
+        {% if page_count <= 12 or n == 1 or n == page_count or (n >= page - 2 and n <= page + 2) %}
+          <a class="btn mini {{ 'primary' if n == page }}"
+             href="{{ url_for('downloaded_detail', illust_id=row.illust_id, p=n, **page_args) }}">{{ n }}</a>
+        {% elif n == 2 or n == page_count - 1 %}
+          <span class="muted small">…</span>
+        {% endif %}
+      {% endfor %}
+      {% if page_next_url %}<a class="btn mini" href="{{ page_next_url }}" title="下一页">›</a>{% endif %}
+    </div>
+    <p class="small muted" style="margin:6px 0 0">第 {{ page }} / {{ page_count }} 页 · 可用键盘 ← → 翻页</p>
+    {% endif %}
+  </div>
+
+  <div class="info panel">
+    <h1>{{ row.title or 'untitled' }}</h1>
+    <p class="small muted">
+      <a href="{{ url_for('downloaded', artist=row.author_id) }}">{{ row.author_name }}</a>
+      · <a href="https://www.pixiv.net/artworks/{{ row.illust_id }}" target="_blank" rel="noopener">Pixiv 原页面</a>
+    </p>
+
+    {% if tags %}
+    <div class="chips" style="margin:10px 0">
+      {% for t in tags %}
+      <span class="chip">
+        <a href="{{ url_for('downloaded', tag=t) }}" style="color:inherit">{{ t }}</a>
+        <form method="post" action="{{ url_for('favorite_tag') }}" style="display:inline;margin:0">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <input type="hidden" name="tag" value="{{ t }}">
+          <input type="hidden" name="next" value="{{ next_url }}">
+          <button type="submit" title="{{ '取消收藏 tag' if t in favorite_tags else '收藏 tag' }}"
+                  style="border:0;background:none;color:inherit;cursor:pointer;padding:0 1px">{{ '★' if t in favorite_tags else '☆' }}</button>
+        </form>
+        <form method="post" action="{{ url_for('rules_tag_add') }}" style="display:inline;margin:0"
+              onsubmit="return confirm('加入排除规则？之后不会再下载包含该 tag 的作品。');">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <input type="hidden" name="tag" value="{{ t }}">
+          <input type="hidden" name="mode" value="exclude">
+          <input type="hidden" name="next" value="{{ next_url }}">
+          <button type="submit" title="加入排除规则"
+                  style="border:0;background:none;color:inherit;cursor:pointer;padding:0 1px">⊘</button>
+        </form>
+      </span>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <dl class="kv">
+      <div><dt>作品 ID</dt><dd>{{ row.illust_id }}</dd></div>
+      <div><dt>类型</dt><dd>{{ row.illust_type or 'illust' }}</dd></div>
+      <div><dt>页数</dt><dd>{{ row.page_count or 1 }}</dd></div>
+      <div><dt>文件数</dt><dd>{{ files|length }}</dd></div>
+      <div><dt>收藏数</dt><dd>{{ row.bookmarks or 0 }}</dd></div>
+      <div><dt>下载时间</dt><dd>{{ row.created_at }}</dd></div>
+      <div><dt>本地收藏</dt><dd>{{ '是' if row.favorite else '否' }}</dd></div>
+    </dl>
+
+    <div class="btn-row">
+      <a class="btn" href="{{ url_for('work_image', illust_id=row.illust_id, p=page) }}" target="_blank">原图</a>
+      <form method="post" action="{{ url_for('downloaded_favorite', illust_id=row.illust_id) }}">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <input type="hidden" name="next" value="{{ next_url }}">
+        <button class="btn" type="submit">{{ '取消收藏' if row.favorite else '收藏' }}</button>
+      </form>
+      <form method="post" action="{{ url_for('downloaded_delete') }}"
+            onsubmit="return confirm('删除这个作品？不可恢复。');">
+        <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+        <input type="hidden" name="illust_id" value="{{ row.illust_id }}">
+        <button class="btn danger" type="submit">删除</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% if related %}
+<div class="related">
+  <h2>相关作品</h2>
+  <div class="works">
+    {% for r in related %}
+    <article class="work">
+      <a class="thumb" href="{{ url_for('downloaded_detail', illust_id=r.illust_id) }}">
+        {% if r.thumb_url %}
+        <img src="{{ url_for('thumb_for_work', illust_id=r.illust_id) }}" alt="{{ r.title }}"
+             loading="lazy" decoding="async" onerror="this.style.display='none';this.parentNode.classList.add('thumb-missing')">
+        {% else %}
+        <span class="placeholder">无预览</span>
+        {% endif %}
+        {% if r.page_count and r.page_count > 1 %}<span class="count">{{ r.page_count }}p</span>{% endif %}
+      </a>
+      <div class="body">
+        <a class="title" href="{{ url_for('downloaded_detail', illust_id=r.illust_id) }}">{{ r.title }}</a>
+        <div class="meta"><span>{{ r.author_name }}</span></div>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+{% if page_count > 1 %}
+<script>
+(function () {
+  var prev = {{ prev_url|tojson }};
+  var next = {{ page_next_url|tojson }};
+  document.addEventListener("keydown", function (e) {
+    var tag = (e.target && e.target.tagName) || "";
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag)) return;
+    if (e.key === "ArrowLeft" && prev) location.href = prev;
+    if (e.key === "ArrowRight" && next) location.href = next;
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}
